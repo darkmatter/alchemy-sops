@@ -3,6 +3,19 @@
   "version": "0.1.0",
   "description": "Alchemy Effect resource for decrypting SOPS files into redacted secret outputs.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/darkmatter/alchemy-sops.git"
+  },
+  "homepage": "https://github.com/darkmatter/alchemy-sops#readme",
+  "bugs": {
+    "url": "https://github.com/darkmatter/alchemy-sops/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true,
+    "registry": "https://registry.npmjs.org"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
