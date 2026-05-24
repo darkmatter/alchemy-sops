@@ -79,7 +79,7 @@ const parsePlaintext = (
       case "text":
         return plaintext;
       case "binary":
-        return Buffer.from(plaintext, "binary").toString("base64");
+        return binaryStringToBase64(plaintext);
     }
   } catch (cause) {
     throw new SopsParseError({
@@ -88,6 +88,25 @@ const parsePlaintext = (
       cause,
     });
   }
+};
+
+const binaryStringToBase64 = (plaintext: string): string => {
+  if (typeof btoa === "function") return btoa(plaintext);
+
+  const buffer = (
+    globalThis as typeof globalThis & {
+      Buffer?: {
+        from: (
+          input: string,
+          encoding: "binary",
+        ) => { toString: (encoding: "base64") => string };
+      };
+    }
+  ).Buffer;
+
+  if (buffer) return buffer.from(plaintext, "binary").toString("base64");
+
+  throw new Error("No base64 encoder is available in this runtime");
 };
 
 const parseDotenv = (plaintext: string): Record<string, string> => {

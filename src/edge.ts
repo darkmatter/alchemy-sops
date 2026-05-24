@@ -1,24 +1,13 @@
 export {
-  SopsFile,
-  SopsFileProvider,
-  SopsFileResource,
-  providers,
-  type SopsFileAttributes,
-  type SopsFileOptions,
-  type SopsFileProps,
-  type SopsFileProviderOptions,
-  type SopsFileResource as SopsFileResourceType,
-  type SopsRetryOptions,
-} from "./resource.js";
+  runSopsAge,
+} from "./sops-age.js";
 export {
   buildSopsArgs,
-  runSopsAge,
-  runSopsCli,
   type SopsBackend,
   type SopsCliFormat,
   type SopsCommandRequest,
   type SopsDecrypt,
-} from "./sops.js";
+} from "./decrypt.js";
 export {
   materializeSecretDocument,
   resolveDocumentFormat,

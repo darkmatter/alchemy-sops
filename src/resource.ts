@@ -6,9 +6,6 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { resolve as resolvePath } from "node:path";
 
 import {
   type MaterializedSecretDocument,
@@ -18,6 +15,7 @@ import {
   materializeSecretDocument,
 } from "./document.js";
 import {
+  SopsDecryptError,
   SopsFileReadError,
   SopsInputError,
   SopsParseError,
@@ -34,9 +32,11 @@ import {
   revealString,
 } from "./input.js";
 import {
+  type SopsBackend,
   type SopsCliFormat,
   type SopsCommandRequest,
   type SopsDecrypt,
+  runSopsAge,
   runSopsCli,
 } from "./sops.js";
 
@@ -48,11 +48,14 @@ export interface SopsRetryOptions {
 }
 
 export interface SopsFileOptions<R = never> {
-  readonly path: SecretStringInput<R>;
+  readonly path?: SecretStringInput<R>;
+  readonly content?: SecretStringInput<R>;
+  readonly url?: SecretStringInput<R>;
   readonly cwd?: SecretStringInput<R>;
   readonly format?: SopsDocumentFormat | SecretStringInput<R>;
   readonly inputType?: SopsCliFormat | SecretStringInput<R>;
   readonly outputType?: SopsCliFormat | SecretStringInput<R>;
+  readonly backend?: SopsBackend | SecretStringInput<R>;
   readonly sopsBinary?: SecretStringInput<R>;
   readonly sopsArgs?: readonly SecretStringInput<R>[];
   readonly extract?: SecretStringInput<R>;
@@ -66,11 +69,14 @@ export interface SopsFileOptions<R = never> {
 }
 
 export interface SopsFileProps {
-  readonly path: MaybeRedactedString;
+  readonly path?: MaybeRedactedString;
+  readonly content?: MaybeRedactedString;
+  readonly url?: MaybeRedactedString;
   readonly cwd?: MaybeRedactedString;
   readonly format: SopsDocumentFormat;
   readonly inputType?: SopsCliFormat;
   readonly outputType?: SopsCliFormat;
+  readonly backend: SopsBackend;
   readonly sopsBinary: MaybeRedactedString;
   readonly sopsArgs: readonly MaybeRedactedString[];
   readonly extract?: MaybeRedactedString;
@@ -136,7 +142,8 @@ export const SopsFileProvider = (
         : { action: "update" as const };
     }),
     reconcile: Effect.fn(function* ({ news, output, session }) {
-      const sourceHash = yield* hashSource(news);
+      const source = yield* loadEncryptedSource(news);
+      const sourceHash = yield* hashLoadedSource(news, source);
       if (
         news.cache &&
         output?.sourceHash === sourceHash &&
@@ -145,30 +152,36 @@ export const SopsFileProvider = (
         return output;
       }
 
-      yield* session.note(`Decrypting ${revealString(news.path)}`);
+      yield* session.note(`Decrypting ${source.label}`);
 
       const outputType = news.outputType ?? defaultOutputType(news.format);
       const request: SopsCommandRequest = {
-        path: revealString(news.path),
         binary: revealString(news.sopsBinary),
         args: news.sopsArgs.map(revealString),
         env: commandEnv(news),
         timeoutMs: news.timeoutMs,
+        content: source.content,
+        ...(source.path ? { path: source.path } : {}),
+        ...(source.url ? { url: source.url } : {}),
         ...(news.cwd ? { cwd: revealString(news.cwd) } : {}),
         ...(news.inputType ? { inputType: news.inputType } : {}),
         ...(outputType ? { outputType } : {}),
         ...(news.extract ? { extract: revealString(news.extract) } : {}),
       };
       const plaintext = yield* decryptWithRetry(
-        options.decrypt ?? runSopsCli,
+        options.decrypt ?? defaultDecrypt(news.backend, news.format),
         request,
         news.retry,
       );
 
-      const materialized = yield* parseDecryptedDocument(plaintext, news);
+      const materialized = yield* parseDecryptedDocument(
+        plaintext,
+        news,
+        source.label,
+      );
 
       return {
-        path: toAbsolutePath(news),
+        path: source.label,
         format: materialized.format,
         sourceHash,
         data: materialized.data,
@@ -188,7 +201,15 @@ const normalizeOptions = <R>(
   options: SopsFileOptions<R>,
 ): Effect.Effect<SopsFileProps, never, R> =>
   Effect.gen(function* () {
-    const path = yield* resolveSecretStringInput(options.path);
+    const path = yield* resolveOptionalSecretStringInput(options.path);
+    const content = yield* resolveOptionalSecretStringInput(options.content);
+    const url = yield* resolveOptionalSecretStringInput(options.url);
+    validateSourceOptions({
+      ...(path !== undefined ? { path } : {}),
+      ...(content !== undefined ? { content } : {}),
+      ...(url !== undefined ? { url } : {}),
+    });
+
     const cwd = yield* resolveOptionalSecretStringInput(options.cwd);
     const format = normalizeDocumentFormat(
       yield* resolveSecretStringInput(options.format ?? "auto"),
@@ -202,6 +223,9 @@ const normalizeOptions = <R>(
       yield* resolveOptionalSecretStringInput(options.outputType),
       "outputType",
     );
+    const backend = normalizeBackend(
+      yield* resolveSecretStringInput(options.backend ?? "auto"),
+    );
     const extract = yield* resolveOptionalSecretStringInput(options.extract);
     const ageKey = yield* resolveOptionalSecretStringInput(options.ageKey);
     const ageKeyFile = yield* resolveOptionalSecretStringInput(
@@ -209,8 +233,8 @@ const normalizeOptions = <R>(
     );
 
     return {
-      path,
       format,
+      backend,
       sopsBinary: yield* resolveSecretStringInput(options.sopsBinary ?? "sops"),
       sopsArgs: yield* resolveSecretStringInputs(options.sopsArgs),
       env: yield* resolveSecretStringRecord(options.env),
@@ -220,6 +244,9 @@ const normalizeOptions = <R>(
         times: options.retry?.times ?? 2,
         delay: options.retry?.delay ?? "250 millis",
       },
+      ...(path !== undefined ? { path } : {}),
+      ...(content !== undefined ? { content } : {}),
+      ...(url !== undefined ? { url } : {}),
       ...(cwd ? { cwd } : {}),
       ...(inputType ? { inputType } : {}),
       ...(outputType ? { outputType } : {}),
@@ -248,6 +275,34 @@ const normalizeDocumentFormat = (
   throw new SopsInputError({
     message: `Invalid ${field}: ${raw}`,
     field,
+  });
+};
+
+const normalizeBackend = (value: MaybeRedactedString): SopsBackend => {
+  const raw = revealString(value);
+  if (raw === "auto" || raw === "cli" || raw === "sops-age") return raw;
+
+  throw new SopsInputError({
+    message: `Invalid backend: ${raw}`,
+    field: "backend",
+  });
+};
+
+const validateSourceOptions = (source: {
+  readonly path?: MaybeRedactedString;
+  readonly content?: MaybeRedactedString;
+  readonly url?: MaybeRedactedString;
+}): void => {
+  const provided = [source.path, source.content, source.url].filter(
+    (value) => value !== undefined,
+  );
+
+  if (provided.length === 1) return;
+
+  throw new SopsInputError({
+    message:
+      "Exactly one SOPS source must be provided: path, content, or url",
+    field: "path",
   });
 };
 
@@ -297,15 +352,56 @@ const decryptWithRetry = (
     }),
   );
 
+const defaultDecrypt = (
+  backend: SopsBackend,
+  format: SopsDocumentFormat,
+): SopsDecrypt => {
+  switch (backend) {
+    case "cli":
+      return runSopsCli;
+    case "sops-age":
+      return runSopsAge;
+    case "auto":
+      return format === "binary" || format === "text"
+        ? runSopsCli
+        : runSopsAgeWithCliFallback;
+  }
+};
+
+const runSopsAgeWithCliFallback: SopsDecrypt = (request) =>
+  runSopsAge(request).pipe(
+    Effect.catchIf(
+      () => true,
+      (nativeError) => {
+        if (!request.path) return Effect.fail(nativeError);
+
+        return runSopsCli(request).pipe(
+          Effect.catchIf(
+            () => true,
+            (cliError) =>
+              Effect.fail(
+                new SopsDecryptError({
+                  message: "Both sops-age and the sops CLI failed to decrypt",
+                  path: request.path ?? "<inline>",
+                  cause: { nativeError, cliError },
+                }),
+              ),
+          ),
+        );
+      },
+    ),
+  );
+
 const parseDecryptedDocument = (
   plaintext: string,
   props: SopsFileProps,
+  sourceLabel: string,
 ): Effect.Effect<MaterializedSecretDocument, SopsParseError | SopsError> =>
   Effect.try({
     try: () =>
       materializeSecretDocument(plaintext, {
         format: props.format,
-        path: revealString(props.path),
+        path: sourceLabel,
         ...(props.secrets ? { secrets: props.secrets } : {}),
       }),
     catch: (cause) =>
@@ -320,39 +416,175 @@ const parseDecryptedDocument = (
           }),
   });
 
+interface LoadedEncryptedSource {
+  readonly label: string;
+  readonly content: string;
+  readonly bytes: Uint8Array;
+  readonly path?: string;
+  readonly url?: string;
+}
+
 const hashSource = (props: SopsFileProps) =>
+  Effect.flatMap(loadEncryptedSource(props), (source) =>
+    hashLoadedSource(props, source),
+  );
+
+const loadEncryptedSource = (
+  props: SopsFileProps,
+): Effect.Effect<LoadedEncryptedSource, SopsFileReadError> =>
   Effect.tryPromise({
     try: async () => {
-      const bytes = await readFile(toAbsolutePath(props));
-      const hash = createHash("sha256");
-      hash.update(bytes);
-      hash.update("\0");
-      hash.update(
-        JSON.stringify({
-          format: props.format,
-          inputType: props.inputType,
-          outputType: props.outputType,
-          extract: props.extract ? revealString(props.extract) : undefined,
-          sopsArgs: props.sopsArgs.map(revealString),
-          secrets: props.secrets,
-          providerVersion: PROVIDER_VERSION,
-        }),
-      );
-      return hash.digest("hex");
+      if (props.content !== undefined) {
+        const content = revealString(props.content);
+        return {
+          label: "<inline>",
+          content,
+          bytes: new TextEncoder().encode(content),
+        };
+      }
+
+      if (props.url !== undefined) {
+        const url = revealString(props.url);
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} while reading ${url}`);
+        }
+        const content = await response.text();
+        return {
+          label: url,
+          url,
+          content,
+          bytes: new TextEncoder().encode(content),
+        };
+      }
+
+      const path = await resolveResourcePath(props);
+      const bytes = await readPathBytes(path);
+      return {
+        label: path,
+        path,
+        content: new TextDecoder().decode(bytes),
+        bytes,
+      };
     },
     catch: (cause) =>
       new SopsFileReadError({
-        message: `Failed to read encrypted SOPS file: ${revealString(props.path)}`,
-        path: revealString(props.path),
+        message: `Failed to read encrypted SOPS source: ${sourceLabel(props)}`,
+        path: sourceLabel(props),
         cause,
       }),
   });
 
-const toAbsolutePath = (props: SopsFileProps): string =>
-  resolvePath(
-    props.cwd ? revealString(props.cwd) : process.cwd(),
-    revealString(props.path),
-  );
+const hashLoadedSource = (
+  props: SopsFileProps,
+  source: LoadedEncryptedSource,
+): Effect.Effect<string, SopsFileReadError> =>
+  Effect.tryPromise({
+    try: () =>
+      sha256Hex([
+        source.bytes,
+        new TextEncoder().encode("\0"),
+        new TextEncoder().encode(
+          JSON.stringify({
+            source: source.label,
+            format: props.format,
+            inputType: props.inputType,
+            outputType: props.outputType,
+            backend: props.backend,
+            extract: props.extract ? revealString(props.extract) : undefined,
+            sopsArgs: props.sopsArgs.map(revealString),
+            secrets: props.secrets,
+            providerVersion: PROVIDER_VERSION,
+          }),
+        ),
+      ]),
+    catch: (cause) =>
+      new SopsFileReadError({
+        message: `Failed to hash encrypted SOPS source: ${source.label}`,
+        path: source.label,
+        cause,
+      }),
+  });
+
+const sourceLabel = (props: SopsFileProps): string => {
+  if (props.path !== undefined) return revealString(props.path);
+  if (props.url !== undefined) return revealString(props.url);
+  return "<inline>";
+};
+
+const resolveResourcePath = async (props: SopsFileProps): Promise<string> => {
+  if (props.path === undefined) {
+    throw new Error("path source is missing");
+  }
+
+  const rawPath = revealString(props.path);
+  const cwd = props.cwd ? revealString(props.cwd) : undefined;
+
+  if (isAbsolutePath(rawPath)) return rawPath;
+
+  if (typeof process !== "undefined" && process.cwd) {
+    const { resolve } = await import("node:path");
+    return resolve(cwd ?? process.cwd(), rawPath);
+  }
+
+  if (cwd) {
+    return new URL(rawPath, cwd).toString();
+  }
+
+  return rawPath;
+};
+
+const isAbsolutePath = (path: string): boolean =>
+  path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+
+const readPathBytes = async (path: string): Promise<Uint8Array> => {
+  const runtime = globalThis as typeof globalThis & {
+    Bun?: {
+      file: (path: string) => { arrayBuffer: () => Promise<ArrayBuffer> };
+    };
+    Deno?: {
+      readFile: (path: string) => Promise<Uint8Array>;
+    };
+  };
+
+  if (runtime.Bun) {
+    return new Uint8Array(await runtime.Bun.file(path).arrayBuffer());
+  }
+
+  if (runtime.Deno) {
+    return runtime.Deno.readFile(path);
+  }
+
+  if (typeof process !== "undefined" && process.versions?.node) {
+    const { readFile } = await import("node:fs/promises");
+    return readFile(path);
+  }
+
+  throw new Error(`Unable to read local file source "${path}"`);
+};
+
+const sha256Hex = async (parts: readonly Uint8Array[]): Promise<string> => {
+  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+
+  if (globalThis.crypto?.subtle) {
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+    return bytesToHex(new Uint8Array(digest));
+  }
+
+  const { createHash } = await import("node:crypto");
+  const hash = createHash("sha256");
+  hash.update(bytes);
+  return hash.digest("hex");
+};
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const commandEnv = (
   props: SopsFileProps,

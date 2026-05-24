@@ -19,6 +19,10 @@ const { test } = Test.make({
   providers: SopsFileProvider({
     decrypt: (request: SopsCommandRequest) =>
       Effect.sync(() => {
+        if (!request.path) {
+          throw new Error("Expected a path-backed decrypt request");
+        }
+
         decryptCalls.set(request.path, (decryptCalls.get(request.path) ?? 0) + 1);
 
         const plaintext = plaintextByPath.get(request.path);
