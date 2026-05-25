@@ -1,6 +1,6 @@
 {
   "name": "alchemy-sops",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Alchemy Effect resource for decrypting SOPS files into redacted secret outputs.",
   "type": "module",
   "repository": {
