@@ -39,7 +39,7 @@ import * as Effect from "effect/Effect";
 export default Alchemy.Stack(
   "App",
   {
-    providers: SopsFileProvider(),
+    providers: SopsFileProvider({ memoize: true }),
     state: Alchemy.localState(),
   },
   Effect.gen(function* () {
@@ -51,10 +51,13 @@ export default Alchemy.Stack(
         DATABASE_URL: "database.url",
         API_TOKEN: "api.token",
       },
+      types: { exportName: "AppSecrets" },
     });
 
     return {
       sourceHash: secrets.sourceHash,
+      topLevelKeys: secrets.topLevelKeys,
+      types: secrets.types,
       databaseUrl: Output.map(secrets.secrets, (s) => s.DATABASE_URL),
     };
   }),
@@ -65,6 +68,15 @@ For local files, `backend: "auto"` is the default. It tries `sops-age` first for
 structured age-encrypted files, then falls back to the CLI when a local `path`
 source is available. Use `backend: "sops-age"` to require the native backend or
 `backend: "cli"` to force the binary.
+
+`SopsFileProvider({ memoize: true })` memoizes decrypt calls in the current
+process. This is useful when multiple lazy resource paths request the same
+encrypted source during one deploy. It does not replace resource `cache`; `cache`
+controls persisted Alchemy output reuse across deploys.
+
+Successful decrypts log the top-level keys without logging values. Set
+`types: true` or `types: { exportName: "AppSecrets" }` to return generated
+TypeScript definitions in `secrets.types`; no files are written.
 
 ## Cloudflare Secrets Store Action
 
@@ -232,7 +244,15 @@ Supported options:
 - `env`, `ageKey`, `ageKeyFile`: SOPS environment inputs; `sops-age` uses
   direct `ageKey` / `SOPS_AGE_KEY`
 - `secrets`: output-name to dot-path selectors
+- `types`: return generated TypeScript definitions for the redacted data shape;
+  use `true` or `{ exportName: "AppSecrets" }`
 - `cache`, `timeoutMs`, `retry`
+
+Provider options:
+
+- `decrypt`: custom decrypt backend
+- `memoize`: `true` to share in-flight and completed decrypts by request in the
+  current process, or `{ key }` to provide a custom memoization key
 
 `CloudflareSopsSecrets` shares the decrypt options above and adds:
 
@@ -255,6 +275,8 @@ The resource returns:
 - `data`: nested document with scalar leaves redacted
 - `flat`: dot-path map of all redacted leaves
 - `secrets`: selected redacted leaves, or all leaves when `secrets` is omitted
+- `topLevelKeys`: top-level keys from the decrypted document
+- `types`: generated TypeScript definitions when `types` was requested
 - `sourceHash`: SHA-256 digest of the encrypted source plus non-secret options
 - `path`, `format`, `version`
 

@@ -1,4 +1,5 @@
-import type * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
 import { SopsDecryptError } from "./errors.js";
@@ -23,6 +24,58 @@ export interface SopsCommandRequest {
 export type SopsDecrypt = (
   request: SopsCommandRequest,
 ) => Effect.Effect<string, SopsDecryptError>;
+
+export interface SopsDecryptMemoizeOptions {
+  readonly key?: (request: SopsCommandRequest) => string;
+}
+
+export const memoizeDecrypt = (
+  decrypt: SopsDecrypt,
+  options: SopsDecryptMemoizeOptions = {},
+): SopsDecrypt => {
+  const keyFor = options.key ?? defaultSopsDecryptMemoizeKey;
+  const cache = new Map<string, Deferred.Deferred<string, SopsDecryptError>>();
+
+  return (request) =>
+    Effect.suspend(() => {
+      const key = keyFor(request);
+      const existing = cache.get(key);
+      if (existing) return Deferred.await(existing);
+
+      return Effect.gen(function* () {
+        const deferred = yield* Deferred.make<string, SopsDecryptError>();
+        cache.set(key, deferred);
+
+        const exit = yield* Effect.exit(decrypt(request));
+        yield* Deferred.done(deferred, exit);
+
+        if (exit._tag === "Failure") {
+          cache.delete(key);
+        }
+
+        return yield* exit;
+      });
+    });
+};
+
+export const defaultSopsDecryptMemoizeKey = (
+  request: SopsCommandRequest,
+): string =>
+  stableStringify({
+    path: request.path,
+    content: request.content
+      ? revealSecretString(request.content)
+      : undefined,
+    url: request.url ? revealSecretString(request.url) : undefined,
+    cwd: request.cwd,
+    binary: request.binary,
+    inputType: request.inputType,
+    outputType: request.outputType,
+    extract: request.extract,
+    args: request.args,
+    envKeys: Object.keys(request.env ?? {}).sort(),
+    timeoutMs: request.timeoutMs,
+  });
 
 export const buildSopsArgs = (request: SopsCommandRequest): string[] => {
   const path = requirePath(request);
@@ -71,3 +124,21 @@ export const revealEnv = (
       revealSecretString(value),
     ]),
   );
+
+const stableStringify = (value: unknown): string =>
+  JSON.stringify(sortForStableStringify(value));
+
+const sortForStableStringify = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(sortForStableStringify);
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, sortForStableStringify(child)]),
+    );
+  }
+
+  return value;
+};

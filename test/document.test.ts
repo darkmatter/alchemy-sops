@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as Redacted from "effect/Redacted";
 
-import { materializeSecretDocument } from "../src/document.ts";
+import {
+  generateSecretTypes,
+  materializeSecretDocument,
+} from "../src/document.ts";
 
 describe("materializeSecretDocument", () => {
   test("parses YAML and redacts every scalar leaf", () => {
@@ -28,5 +31,25 @@ describe("materializeSecretDocument", () => {
 
     expect(Object.keys(result.secrets)).toEqual(["DATABASE_URL"]);
     expect(Redacted.value(result.secrets.DATABASE_URL!)).toBe("postgres://db");
+  });
+
+  test("generates return-only TypeScript definitions for a secret tree", () => {
+    const result = materializeSecretDocument(
+      '{"api":{"token":"sk_live"},"enabled":true,"hosts":["a","b"]}',
+      { format: "json" },
+    );
+
+    expect(
+      generateSecretTypes(result.data, { exportName: "AppSecrets" }),
+    ).toBe(`import type * as Redacted from "effect/Redacted";
+
+export interface AppSecrets {
+  readonly api: {
+    readonly token: Redacted.Redacted<string>;
+  };
+  readonly enabled: Redacted.Redacted<string>;
+  readonly hosts: readonly Redacted.Redacted<string>[];
+}
+`);
   });
 });

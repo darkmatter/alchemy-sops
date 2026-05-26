@@ -26,11 +26,16 @@ export interface MaterializeSecretDocumentOptions {
   readonly secrets?: Record<string, string>;
 }
 
+export interface GenerateSecretTypesOptions {
+  readonly exportName?: string;
+}
+
 export interface MaterializedSecretDocument {
   readonly format: ResolvedSopsDocumentFormat;
   readonly data: SecretTree;
   readonly flat: SecretRecord;
   readonly secrets: SecretRecord;
+  readonly topLevelKeys: readonly string[];
 }
 
 export const materializeSecretDocument = (
@@ -48,7 +53,34 @@ export const materializeSecretDocument = (
     data,
     flat,
     secrets,
+    topLevelKeys: topLevelSecretKeys(data),
   };
+};
+
+export const generateSecretTypes = (
+  tree: SecretTree,
+  options: GenerateSecretTypesOptions = {},
+): string => {
+  const exportName = options.exportName ?? "SopsSecrets";
+  const importLine = 'import type * as Redacted from "effect/Redacted";';
+
+  if (!isObjectTree(tree)) {
+    return `${importLine}
+
+export type ${exportName} = ${renderSecretType(tree, 0)};
+`;
+  }
+
+  return `${importLine}
+
+export interface ${exportName} ${renderObjectType(tree, 0)}
+`;
+};
+
+export const topLevelSecretKeys = (tree: SecretTree): readonly string[] => {
+  if (Redacted.isRedacted(tree)) return ["value"];
+  if (Array.isArray(tree)) return tree.map((_, index) => `[${index}]`);
+  return Object.keys(tree);
 };
 
 export const resolveDocumentFormat = (
@@ -205,3 +237,59 @@ const selectSecrets = (
   }
   return selected;
 };
+
+const renderSecretType = (tree: SecretTree, indentLevel: number): string => {
+  if (Redacted.isRedacted(tree)) return "Redacted.Redacted<string>";
+
+  if (Array.isArray(tree)) {
+    const itemType =
+      tree.length === 0
+        ? "Redacted.Redacted<string>"
+        : renderArrayItemType(tree, indentLevel);
+    return `readonly ${itemType}[]`;
+  }
+
+  return renderObjectType(
+    tree as { readonly [key: string]: SecretTree },
+    indentLevel,
+  );
+};
+
+const renderArrayItemType = (
+  values: readonly SecretTree[],
+  indentLevel: number,
+): string => {
+  const rendered = values.map((value) => renderSecretType(value, indentLevel));
+  const unique = [...new Set(rendered)];
+  return unique.length === 1 ? unique[0]! : `(${unique.join(" | ")})`;
+};
+
+const renderObjectType = (
+  tree: { readonly [key: string]: SecretTree },
+  indentLevel: number,
+): string => {
+  const currentIndent = indent(indentLevel);
+  const childIndent = indent(indentLevel + 1);
+  const entries = Object.entries(tree);
+
+  if (entries.length === 0) return "{}";
+
+  const properties = entries
+    .map(([key, value]) => {
+      const rendered = renderSecretType(value, indentLevel + 1);
+      return `${childIndent}readonly ${formatPropertyKey(key)}: ${rendered};`;
+    })
+    .join("\n");
+
+  return `{\n${properties}\n${currentIndent}}`;
+};
+
+const isObjectTree = (
+  tree: SecretTree,
+): tree is { readonly [key: string]: SecretTree } =>
+  !Redacted.isRedacted(tree) && !Array.isArray(tree);
+
+const formatPropertyKey = (key: string): string =>
+  /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+
+const indent = (level: number): string => "  ".repeat(level);

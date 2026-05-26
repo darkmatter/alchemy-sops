@@ -144,6 +144,7 @@ test.provider(
       yield* stack.destroy();
 
       expect(created.imported.imported[0]!.name).toBe("API_TOKEN");
+      expect(created.imported.topLevelKeys).toEqual(["api"]);
       expect(unchanged.imported.imported[0]!.secretId).toBe(
         created.imported.imported[0]!.secretId,
       );

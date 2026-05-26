@@ -24,20 +24,28 @@ export {
   type SopsFileProps,
   type SopsFileProviderOptions,
   type SopsFileResource as SopsFileResourceType,
+  type SopsGeneratedTypesInput,
+  type SopsGeneratedTypesOptions,
   type SopsRetryOptions,
 } from "./resource.js";
 export {
   buildSopsArgs,
+  defaultSopsDecryptMemoizeKey,
+  memoizeDecrypt,
   runSopsAge,
   runSopsCli,
   type SopsBackend,
   type SopsCliFormat,
   type SopsCommandRequest,
   type SopsDecrypt,
+  type SopsDecryptMemoizeOptions,
 } from "./sops.js";
 export {
+  generateSecretTypes,
   materializeSecretDocument,
   resolveDocumentFormat,
+  topLevelSecretKeys,
+  type GenerateSecretTypesOptions,
   type MaterializedSecretDocument,
   type ResolvedSopsDocumentFormat,
   type SecretRecord,

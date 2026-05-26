@@ -8,10 +8,12 @@ import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 
 import {
+  type GenerateSecretTypesOptions,
   type MaterializedSecretDocument,
   type SecretRecord,
   type SecretTree,
   type SopsDocumentFormat,
+  generateSecretTypes,
   materializeSecretDocument,
 } from "./document.js";
 import {
@@ -36,6 +38,8 @@ import {
   type SopsCliFormat,
   type SopsCommandRequest,
   type SopsDecrypt,
+  type SopsDecryptMemoizeOptions,
+  memoizeDecrypt,
   runSopsAge,
   runSopsCli,
 } from "./sops.js";
@@ -46,6 +50,9 @@ export interface SopsRetryOptions {
   readonly times?: number;
   readonly delay?: Duration.Input;
 }
+
+export type SopsGeneratedTypesOptions = GenerateSecretTypesOptions;
+export type SopsGeneratedTypesInput = true | SopsGeneratedTypesOptions;
 
 export interface SopsFileOptions<R = never> {
   readonly path?: SecretStringInput<R>;
@@ -64,6 +71,7 @@ export interface SopsFileOptions<R = never> {
   readonly ageKeyFile?: SecretStringInput<R>;
   readonly secrets?: Record<string, string>;
   readonly cache?: boolean;
+  readonly types?: SopsGeneratedTypesInput;
   readonly timeoutMs?: number;
   readonly retry?: SopsRetryOptions;
 }
@@ -85,6 +93,7 @@ export interface SopsFileProps {
   readonly ageKeyFile?: MaybeRedactedString;
   readonly secrets?: Record<string, string>;
   readonly cache: boolean;
+  readonly types?: SopsGeneratedTypesOptions;
   readonly timeoutMs: number;
   readonly retry: Required<SopsRetryOptions>;
 }
@@ -96,6 +105,8 @@ export interface SopsFileAttributes {
   readonly data: SecretTree;
   readonly flat: SecretRecord;
   readonly secrets: SecretRecord;
+  readonly topLevelKeys: readonly string[];
+  readonly types?: string;
   readonly version: number;
 }
 
@@ -107,6 +118,7 @@ export type SopsFileResource = AlchemyResource<
 
 export interface SopsFileProviderOptions {
   readonly decrypt?: SopsDecrypt;
+  readonly memoize?: boolean | SopsDecryptMemoizeOptions;
 }
 
 export const SopsFileResource = Resource<SopsFileResource>("Sops.File");
@@ -121,10 +133,25 @@ export const SopsFile = <R = never>(
 > =>
   SopsFileResource(id, normalizeOptions(options));
 
-export const SopsFileProvider = (
-  options: SopsFileProviderOptions = {},
-) =>
-  Provider.succeed(SopsFileResource, {
+export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
+  const decrypts = new Map<string, SopsDecrypt>();
+  const decryptFor = (backend: SopsBackend, format: SopsDocumentFormat) => {
+    const base = options.decrypt ?? defaultDecrypt(backend, format);
+    if (!options.memoize) return base;
+
+    const key = options.decrypt ? "custom" : `${backend}:${format}`;
+    const existing = decrypts.get(key);
+    if (existing) return existing;
+
+    const memoized = memoizeDecrypt(
+      base,
+      options.memoize === true ? undefined : options.memoize,
+    );
+    decrypts.set(key, memoized);
+    return memoized;
+  };
+
+  return Provider.succeed(SopsFileResource, {
     version: PROVIDER_VERSION,
     read: Effect.fn(function* ({ output }) {
       return output;
@@ -169,7 +196,7 @@ export const SopsFileProvider = (
         ...(news.extract ? { extract: revealString(news.extract) } : {}),
       };
       const plaintext = yield* decryptWithRetry(
-        options.decrypt ?? defaultDecrypt(news.backend, news.format),
+        decryptFor(news.backend, news.format),
         request,
         news.retry,
       );
@@ -179,6 +206,15 @@ export const SopsFileProvider = (
         news,
         source.label,
       );
+      yield* session.note(
+        `Decrypted ${source.label}: top-level keys ${formatTopLevelKeys(
+          materialized.topLevelKeys,
+        )}`,
+      );
+
+      const generatedTypes = news.types
+        ? generateSecretTypes(materialized.data, news.types)
+        : undefined;
 
       return {
         path: source.label,
@@ -187,6 +223,8 @@ export const SopsFileProvider = (
         data: materialized.data,
         flat: materialized.flat,
         secrets: materialized.secrets,
+        topLevelKeys: materialized.topLevelKeys,
+        ...(generatedTypes ? { types: generatedTypes } : {}),
         version: PROVIDER_VERSION,
       };
     }),
@@ -194,6 +232,7 @@ export const SopsFileProvider = (
       return undefined;
     }),
   });
+};
 
 export const providers = SopsFileProvider;
 
@@ -239,6 +278,7 @@ const normalizeOptions = <R>(
       sopsArgs: yield* resolveSecretStringInputs(options.sopsArgs),
       env: yield* resolveSecretStringRecord(options.env),
       cache: options.cache ?? true,
+      ...(options.types ? { types: normalizeGeneratedTypes(options.types) } : {}),
       timeoutMs: options.timeoutMs ?? 30_000,
       retry: {
         times: options.retry?.times ?? 2,
@@ -495,6 +535,7 @@ const hashLoadedSource = (
             sopsArgs: props.sopsArgs.map(revealString),
             secrets: props.secrets,
             providerVersion: PROVIDER_VERSION,
+            types: props.types,
           }),
         ),
       ]),
@@ -603,3 +644,11 @@ const sameProps = (
   olds: SopsFileProps | undefined,
   news: SopsFileProps,
 ): boolean => JSON.stringify(olds ?? {}) === JSON.stringify(news);
+
+const normalizeGeneratedTypes = (
+  options: SopsGeneratedTypesInput,
+): SopsGeneratedTypesOptions =>
+  options === true ? {} : options;
+
+const formatTopLevelKeys = (keys: readonly string[]): string =>
+  keys.length === 0 ? "(none)" : keys.join(", ");

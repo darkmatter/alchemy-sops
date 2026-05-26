@@ -35,6 +35,27 @@ const { test } = Test.make({
   }),
 });
 
+const { test: memoizedTest } = Test.make({
+  providers: SopsFileProvider({
+    memoize: true,
+    decrypt: (request: SopsCommandRequest) =>
+      Effect.sync(() => {
+        if (!request.path) {
+          throw new Error("Expected a path-backed decrypt request");
+        }
+
+        decryptCalls.set(request.path, (decryptCalls.get(request.path) ?? 0) + 1);
+
+        const plaintext = plaintextByPath.get(request.path);
+        if (!plaintext) {
+          throw new Error(`No test plaintext registered for ${request.path}`);
+        }
+
+        return plaintext();
+      }),
+  }),
+});
+
 test.provider(
   "create, noop, destroy a SOPS file resource",
   (stack) =>
@@ -103,6 +124,80 @@ test.provider(
       expect(decryptCalls.get(encryptedPath)).toBe(2);
       expect(Redacted.value(created.token)).toBe("value-1");
       expect(Redacted.value(updated.token)).toBe("value-2");
+    }),
+);
+
+test.provider(
+  "returns top-level keys and generated types",
+  (stack) =>
+    Effect.gen(function* () {
+      const encryptedPath = yield* writeEncryptedFixture(
+        "typed.enc.yaml",
+        "ciphertext-v1",
+      );
+      plaintextByPath.set(encryptedPath, () =>
+        JSON.stringify({
+          api: { token: "first" },
+          enabled: true,
+        }),
+      );
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const file = yield* SopsFile("TypedSecrets", {
+            path: encryptedPath,
+            format: "json",
+            types: { exportName: "TypedSecrets" },
+          });
+
+          return {
+            topLevelKeys: file.topLevelKeys,
+            types: file.types,
+          };
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(deployed.topLevelKeys).toEqual(["api", "enabled"]);
+      expect(deployed.types).toContain("export interface TypedSecrets");
+      expect(deployed.types).toContain(
+        "readonly token: Redacted.Redacted<string>;",
+      );
+    }),
+);
+
+memoizedTest.provider(
+  "memoizes duplicate decrypts during one provider run",
+  (stack) =>
+    Effect.gen(function* () {
+      const encryptedPath = yield* writeEncryptedFixture(
+        "memoized.enc.yaml",
+        "ciphertext-v1",
+      );
+      plaintextByPath.set(encryptedPath, () => '{"token":"first"}');
+
+      yield* stack.deploy(
+        Effect.gen(function* () {
+          const first = yield* SopsFile("FirstSecrets", {
+            path: encryptedPath,
+            format: "json",
+            cache: false,
+          });
+          const second = yield* SopsFile("SecondSecrets", {
+            path: encryptedPath,
+            format: "json",
+            cache: false,
+          });
+
+          return {
+            first: Output.map(first.flat, (secrets) => secrets.token!),
+            second: Output.map(second.flat, (secrets) => secrets.token!),
+          };
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(decryptCalls.get(encryptedPath)).toBe(1);
     }),
 );
 

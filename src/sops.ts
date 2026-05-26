@@ -5,11 +5,14 @@ import { requestLabel, type SopsDecrypt } from "./decrypt.js";
 
 export {
   buildSopsArgs,
+  defaultSopsDecryptMemoizeKey,
+  memoizeDecrypt,
   revealEnv,
   type SopsBackend,
   type SopsCliFormat,
   type SopsCommandRequest,
   type SopsDecrypt,
+  type SopsDecryptMemoizeOptions,
 } from "./decrypt.js";
 
 export const runSopsCli: SopsDecrypt = (request) =>

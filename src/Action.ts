@@ -93,6 +93,7 @@ export interface CloudflareSopsSecretsOutput {
   readonly accountId: string;
   readonly storeId: string;
   readonly path: string;
+  readonly topLevelKeys: readonly string[];
   readonly imported: {
     readonly name: string;
     readonly path: string;
@@ -163,6 +164,11 @@ export const CloudflareSopsSecretsAction = Action(
         path: input.path,
         ...(input.secrets ? { secrets: input.secrets } : {}),
       });
+      yield* Effect.logInfo(
+        `Decrypted ${input.path}: top-level keys ${formatTopLevelKeys(
+          materialized.topLevelKeys,
+        )}`,
+      );
       const imports = planCloudflareSecretImports(materialized.flat, input);
       const scopes = [...(input.scopes ?? ["workers"])];
       const listed = yield* secretsStore.listStoreSecrets
@@ -277,6 +283,7 @@ export const CloudflareSopsSecretsAction = Action(
         accountId: input.store.accountId,
         storeId: input.store.storeId,
         path: input.path,
+        topLevelKeys: materialized.topLevelKeys,
         imported,
       };
     });
@@ -446,3 +453,6 @@ const defaultDecrypt = (
             );
   }
 };
+
+const formatTopLevelKeys = (keys: readonly string[]): string =>
+  keys.length === 0 ? "(none)" : keys.join(", ");
