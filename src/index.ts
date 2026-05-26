@@ -1,4 +1,20 @@
 export {
+  CloudflareSopsSecrets,
+  CloudflareSopsSecretsAction,
+  cloudflareSecretName,
+  cloudflareSopsWorkerBindings,
+  planCloudflareSecretImports,
+  type CloudflareSecretImport,
+  type CloudflareSecretsStoreInput,
+  type CloudflareSecretsStoreRef,
+  type CloudflareSopsSecretsActionInput,
+  type CloudflareSopsSecretsOptions,
+  type CloudflareSopsSecretsOutput,
+  type CloudflareSopsWorkerBindingSet,
+  type CloudflareSopsWorkerBindingSource,
+  type CloudflareSopsWorkerSecretBinding,
+} from "./Action.js";
+export {
   SopsFile,
   SopsFileProvider,
   SopsFileResource,

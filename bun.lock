@@ -5,6 +5,7 @@
     "": {
       "name": "alchemy-sops",
       "dependencies": {
+        "@distilled.cloud/cloudflare": "0.21.5",
         "@effect/platform-bun": ">=4.0.0-beta.66 || >=4.0.0",
         "@effect/platform-node": ">=4.0.0-beta.66 || >=4.0.0",
         "alchemy": "2.0.0-beta.43",

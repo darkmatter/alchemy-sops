@@ -56,6 +56,66 @@ structured age-encrypted files, then falls back to the CLI when a local `path`
 source is available. Use `backend: "sops-age"` to require the native backend or
 `backend: "cli"` to force the binary.
 
+## Cloudflare Workers Secrets Store
+
+Use `CloudflareSopsSecrets` when a Worker should receive secrets from
+Cloudflare Secrets Store instead of Alchemy state. The Action reads the
+encrypted SOPS file during deploy, decrypts it, and imports selected values into
+the store. Its persisted input is ciphertext, not plaintext.
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import {
+  CloudflareSopsSecrets,
+  cloudflareSopsWorkerBindings,
+} from "alchemy-sops";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+
+export default Alchemy.Stack(
+  "Worker",
+  {
+    providers: Cloudflare.providers(),
+    state: Cloudflare.state(),
+  },
+  Effect.gen(function* () {
+    const store = yield* Cloudflare.SecretsStore("Secrets");
+
+    const imported = yield* CloudflareSopsSecrets("WorkerSecrets", {
+      path: "./secrets.enc.yaml",
+      format: "yaml",
+      backend: "sops-age",
+      store,
+      ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
+      secrets: {
+        API_TOKEN: "api.token",
+        DATABASE_URL: "database.url",
+      },
+    });
+
+    const worker = yield* Cloudflare.Worker("Api", {
+      main: "./src/worker.ts",
+    });
+    yield* worker.bind(
+      "sops-secrets",
+      cloudflareSopsWorkerBindings(imported, [
+        "API_TOKEN",
+        "DATABASE_URL",
+      ]),
+    );
+
+    return {
+      url: worker.url,
+    };
+  }),
+);
+```
+
+Existing Secrets Store entries are replaced by default because Cloudflare does
+not allow patching a secret value. Set `replaceExisting: false` when you only
+want to converge scopes and comments for an existing secret name.
+
 ## Edge usage
 
 Alchemy programs can avoid local filesystem and process APIs by using inline
