@@ -7,6 +7,16 @@ Alchemy outputs whose scalar leaves are `Redacted<string>`. It prefers the
 native `sops-age` backend for age-encrypted JSON/YAML/dotenv files and keeps the
 `sops` CLI backend for binary files, custom SOPS flags, and non-age backends.
 
+## Contents
+
+- [Install](#install)
+- [Usage](#usage)
+- [Cloudflare Secrets Store Action](#cloudflare-secrets-store-action)
+- [Edge usage](#edge-usage)
+- [Inputs](#inputs)
+- [Outputs](#outputs)
+- [Security note](#security-note)
+
 ## Install
 
 ```sh
@@ -56,12 +66,24 @@ structured age-encrypted files, then falls back to the CLI when a local `path`
 source is available. Use `backend: "sops-age"` to require the native backend or
 `backend: "cli"` to force the binary.
 
-## Cloudflare Workers Secrets Store
+## Cloudflare Secrets Store Action
 
-Use `CloudflareSopsSecrets` when a Worker should receive secrets from
-Cloudflare Secrets Store instead of Alchemy state. The Action reads the
-encrypted SOPS file during deploy, decrypts it, and imports selected values into
-the store. Its persisted input is ciphertext, not plaintext.
+Use `CloudflareSopsSecrets` when Cloudflare Workers should receive secrets from
+Cloudflare Secrets Store instead of Alchemy state. It is the high-level wrapper
+around the exported `CloudflareSopsSecretsAction`.
+
+The wrapper reads a local encrypted SOPS file before registering the Action,
+passes ciphertext into Action state, decrypts during deploy, and imports selected
+values into the target store. Plaintext is sent to Cloudflare Secrets Store but
+is not persisted as Action input.
+
+A stack using the Action needs:
+
+- Cloudflare providers and state configured in the Alchemy stack
+- A `Cloudflare.SecretsStore` resource or `{ accountId, storeId }` reference
+- A deploy-time SOPS identity, preferably passed as `Redacted<string>`
+- A `secrets` map from Cloudflare secret names to decrypted dot-path selectors,
+  or no `secrets` map when all scalar leaves should be imported
 
 ```ts
 import * as Alchemy from "alchemy";
@@ -88,6 +110,8 @@ export default Alchemy.Stack(
       backend: "sops-age",
       store,
       ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
+      scopes: ["workers"],
+      comment: "imported by alchemy-sops",
       secrets: {
         API_TOKEN: "api.token",
         DATABASE_URL: "database.url",
@@ -112,9 +136,57 @@ export default Alchemy.Stack(
 );
 ```
 
+`secrets` maps Cloudflare secret names to paths in the decrypted document. Omit
+it to import every scalar leaf; generated names are derived from dot paths, and
+`namePrefix` can add a prefix to every generated name.
+
+`cloudflareSopsWorkerBindings(imported, ["API_TOKEN"])` binds a Worker variable
+to the Secrets Store secret with the same name. Pass an object when the Worker
+binding name should differ from the stored secret name:
+
+```ts
+yield* worker.bind(
+  "sops-secrets",
+  cloudflareSopsWorkerBindings(imported, {
+    API_TOKEN: "WORKER_API_TOKEN",
+  }),
+);
+```
+
+Run the stack with your normal Alchemy deploy command. The Action runs when its
+input changes, including the encrypted file content, backend options, selected
+secret paths, scopes, comments, and target store.
+
 Existing Secrets Store entries are replaced by default because Cloudflare does
 not allow patching a secret value. Set `replaceExisting: false` when you only
-want to converge scopes and comments for an existing secret name.
+want to converge scopes and comments for an existing secret name. The Cloudflare
+credentials used by the stack must be allowed to manage the target Secrets
+Store, and Worker deploy permissions are also needed when the same stack binds
+those secrets to a Worker.
+
+Most stacks should call `CloudflareSopsSecrets`. Use
+`CloudflareSopsSecretsAction` directly only when the encrypted content is
+already available and you want to pass the Action input yourself:
+
+```ts
+import { CloudflareSopsSecretsAction } from "alchemy-sops";
+import * as Redacted from "effect/Redacted";
+
+const imported = yield* CloudflareSopsSecretsAction("WorkerSecrets", {
+  path: "secrets.enc.yaml",
+  content: encryptedSopsYaml,
+  format: "yaml",
+  backend: "sops-age",
+  store: {
+    accountId: "account-id",
+    storeId: "store-id",
+  },
+  ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
+  secrets: {
+    API_TOKEN: "api.token",
+  },
+});
+```
 
 ## Edge usage
 
@@ -162,6 +234,20 @@ Supported options:
 - `secrets`: output-name to dot-path selectors
 - `cache`, `timeoutMs`, `retry`
 
+`CloudflareSopsSecrets` shares the decrypt options above and adds:
+
+- `store`: Cloudflare Secrets Store resource or `{ accountId, storeId }`
+- `namePrefix`: prefix for generated Cloudflare secret names when `secrets` is
+  omitted
+- `scopes`: Cloudflare Secrets Store scopes; defaults to `["workers"]`
+- `comment`: free-form Cloudflare Secrets Store comment
+- `replaceExisting`: delete and recreate matching existing secrets so values
+  converge; defaults to `true`
+
+`CloudflareSopsSecretsAction` also accepts `content`, the encrypted SOPS
+ciphertext to use as Action input. The `CloudflareSopsSecrets` wrapper fills
+that field by reading `path`.
+
 ## Outputs
 
 The resource returns:
@@ -175,6 +261,10 @@ The resource returns:
 `cache` defaults to `true`. If the encrypted source digest and resource version
 are unchanged, the provider returns the previous redacted output without
 decrypting again. Set `cache: false` to force decryption on every deploy.
+
+The Cloudflare Action returns `accountId`, `storeId`, `path`, and an `imported`
+array containing each Cloudflare secret name, source dot path, secret id, and
+status.
 
 ## Security note
 
