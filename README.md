@@ -35,6 +35,16 @@ import * as Output from "alchemy/Output";
 import { SopsFile, SopsFileProvider } from "alchemy-sops";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+const AppSecrets = Schema.Struct({
+  database: Schema.Struct({
+    url: Schema.RedactedFromValue(Schema.String),
+  }),
+  api: Schema.Struct({
+    token: Schema.RedactedFromValue(Schema.String),
+  }),
+});
 
 export default Alchemy.Stack(
   "App",
@@ -47,18 +57,13 @@ export default Alchemy.Stack(
       path: "./secrets.enc.yaml",
       format: "yaml",
       ageKey: Config.redacted("SOPS_AGE_KEY"),
-      secrets: {
-        DATABASE_URL: "database.url",
-        API_TOKEN: "api.token",
-      },
-      types: { exportName: "AppSecrets" },
+      schema: AppSecrets,
     });
 
     return {
       sourceHash: secrets.sourceHash,
       topLevelKeys: secrets.topLevelKeys,
-      types: secrets.types,
-      databaseUrl: Output.map(secrets.secrets, (s) => s.DATABASE_URL),
+      databaseUrl: Output.map(secrets.value, (s) => s.database.url),
     };
   }),
 );
@@ -74,9 +79,16 @@ process. This is useful when multiple lazy resource paths request the same
 encrypted source during one deploy. It does not replace resource `cache`; `cache`
 controls persisted Alchemy output reuse across deploys.
 
-Successful decrypts log the top-level keys without logging values. Set
-`types: true` or `types: { exportName: "AppSecrets" }` to return generated
-TypeScript definitions in `secrets.types`; no files are written.
+Successful decrypts log the top-level keys without logging values. Pass a
+service-free `Schema.Struct` from `effect/Schema` as `schema` to validate the
+decrypted document and return a typed `secrets.value` output. Use
+`Schema.RedactedFromValue(...)` for fields that should remain redacted in the
+typed output.
+
+The older `secrets` selector map is still supported when you need a flat
+dot-path selection, and `types: true` or `types: { exportName: "AppSecrets" }`
+still returns generated TypeScript definitions in `secrets.types`; no files are
+written.
 
 ## Cloudflare Secrets Store Action
 
@@ -243,7 +255,9 @@ Supported options:
 - `sopsArgs`: extra CLI args; requires `backend: "cli"` or CLI fallback
 - `env`, `ageKey`, `ageKeyFile`: SOPS environment inputs; `sops-age` uses
   direct `ageKey` / `SOPS_AGE_KEY`
-- `secrets`: output-name to dot-path selectors
+- `schema`: service-free `Schema.Struct` from `effect/Schema`; validates the
+  decrypted document and enables the typed `value` output
+- `secrets`: output-name to dot-path selectors; optional legacy flat selection
 - `types`: return generated TypeScript definitions for the redacted data shape;
   use `true` or `{ exportName: "AppSecrets" }`
 - `cache`, `timeoutMs`, `retry`
@@ -275,6 +289,7 @@ The resource returns:
 - `data`: nested document with scalar leaves redacted
 - `flat`: dot-path map of all redacted leaves
 - `secrets`: selected redacted leaves, or all leaves when `secrets` is omitted
+- `value`: schema-validated typed document when `schema` was provided
 - `topLevelKeys`: top-level keys from the decrypted document
 - `types`: generated TypeScript definitions when `types` was requested
 - `sourceHash`: SHA-256 digest of the encrypted source plus non-secret options

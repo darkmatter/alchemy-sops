@@ -6,6 +6,7 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import {
   type GenerateSecretTypesOptions,
@@ -14,13 +15,15 @@ import {
   type SecretTree,
   type SopsDocumentFormat,
   generateSecretTypes,
-  materializeSecretDocument,
+  materializeSecretValue,
+  parseSecretDocument,
 } from "./document.js";
 import {
   SopsDecryptError,
   SopsFileReadError,
   SopsInputError,
   SopsParseError,
+  SopsSchemaError,
   SopsSecretPathError,
   type SopsError,
 } from "./errors.js";
@@ -45,6 +48,7 @@ import {
 } from "./sops.js";
 
 const PROVIDER_VERSION = 1;
+const registeredSchemas = new Map<string, SopsFileSchema>();
 
 export interface SopsRetryOptions {
   readonly times?: number;
@@ -53,6 +57,8 @@ export interface SopsRetryOptions {
 
 export type SopsGeneratedTypesOptions = GenerateSecretTypesOptions;
 export type SopsGeneratedTypesInput = true | SopsGeneratedTypesOptions;
+export type SopsFileSchema = Schema.Struct<Schema.Struct.Fields> &
+  Schema.Decoder<unknown>;
 
 export interface SopsFileOptions<R = never> {
   readonly path?: SecretStringInput<R>;
@@ -69,6 +75,7 @@ export interface SopsFileOptions<R = never> {
   readonly env?: Record<string, SecretStringInput<R>>;
   readonly ageKey?: SecretStringInput<R>;
   readonly ageKeyFile?: SecretStringInput<R>;
+  readonly schema?: SopsFileSchema;
   readonly secrets?: Record<string, string>;
   readonly cache?: boolean;
   readonly types?: SopsGeneratedTypesInput;
@@ -91,6 +98,7 @@ export interface SopsFileProps {
   readonly env: Record<string, MaybeRedactedString>;
   readonly ageKey?: MaybeRedactedString;
   readonly ageKeyFile?: MaybeRedactedString;
+  readonly schemaKey?: string;
   readonly secrets?: Record<string, string>;
   readonly cache: boolean;
   readonly types?: SopsGeneratedTypesOptions;
@@ -98,7 +106,7 @@ export interface SopsFileProps {
   readonly retry: Required<SopsRetryOptions>;
 }
 
-export interface SopsFileAttributes {
+export type SopsFileAttributes<Value = never> = {
   readonly path: string;
   readonly format: Exclude<SopsDocumentFormat, "auto">;
   readonly sourceHash: string;
@@ -108,12 +116,12 @@ export interface SopsFileAttributes {
   readonly topLevelKeys: readonly string[];
   readonly types?: string;
   readonly version: number;
-}
+} & ([Value] extends [never] ? {} : { readonly value: Value });
 
-export type SopsFileResource = AlchemyResource<
+export type SopsFileResource<Value = never> = AlchemyResource<
   "Sops.File",
   SopsFileProps,
-  SopsFileAttributes
+  SopsFileAttributes<Value>
 >;
 
 export interface SopsFileProviderOptions {
@@ -123,15 +131,32 @@ export interface SopsFileProviderOptions {
 
 export const SopsFileResource = Resource<SopsFileResource>("Sops.File");
 
-export const SopsFile = <R = never>(
+export function SopsFile<S extends SopsFileSchema, R = never>(
+  id: string,
+  options: SopsFileOptions<R> & { readonly schema: S },
+): Effect.Effect<
+  SopsFileResource<S["Type"]>,
+  never,
+  R | Provider.Provider<SopsFileResource>
+>;
+export function SopsFile<R = never>(
   id: string,
   options: SopsFileOptions<R>,
 ): Effect.Effect<
   SopsFileResource,
   never,
   R | Provider.Provider<SopsFileResource>
-> =>
-  SopsFileResource(id, normalizeOptions(options));
+>;
+export function SopsFile<R = never>(
+  id: string,
+  options: SopsFileOptions<R>,
+): Effect.Effect<
+  SopsFileResource,
+  never,
+  R | Provider.Provider<SopsFileResource>
+> {
+  return SopsFileResource(id, normalizeOptions(options));
+}
 
 export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
   const decrypts = new Map<string, SopsDecrypt>();
@@ -224,6 +249,7 @@ export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
         flat: materialized.flat,
         secrets: materialized.secrets,
         topLevelKeys: materialized.topLevelKeys,
+        ...(news.schemaKey ? { value: materialized.value } : {}),
         ...(generatedTypes ? { types: generatedTypes } : {}),
         version: PROVIDER_VERSION,
       };
@@ -278,6 +304,7 @@ const normalizeOptions = <R>(
       sopsArgs: yield* resolveSecretStringInputs(options.sopsArgs),
       env: yield* resolveSecretStringRecord(options.env),
       cache: options.cache ?? true,
+      ...(options.schema ? { schemaKey: registerSchema(options.schema) } : {}),
       ...(options.types ? { types: normalizeGeneratedTypes(options.types) } : {}),
       timeoutMs: options.timeoutMs ?? 30_000,
       retry: {
@@ -436,24 +463,46 @@ const parseDecryptedDocument = (
   plaintext: string,
   props: SopsFileProps,
   sourceLabel: string,
-): Effect.Effect<MaterializedSecretDocument, SopsParseError | SopsError> =>
-  Effect.try({
-    try: () =>
-      materializeSecretDocument(plaintext, {
-        format: props.format,
-        path: sourceLabel,
-        ...(props.secrets ? { secrets: props.secrets } : {}),
-      }),
-    catch: (cause) =>
-      cause instanceof SopsParseError
-        ? cause
-        : cause instanceof SopsSecretPathError
-        ? cause
-        : new SopsParseError({
-            message: "Failed to materialize decrypted SOPS content",
-            format: props.format,
-            cause,
-          }),
+): Effect.Effect<
+  MaterializedSecretDocument<unknown>,
+  SopsParseError | SopsError
+> =>
+  Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () =>
+        parseSecretDocument(plaintext, {
+          format: props.format,
+          path: sourceLabel,
+        }),
+      catch: (cause) =>
+        cause instanceof SopsParseError
+          ? cause
+          : new SopsParseError({
+              message: "Failed to parse decrypted SOPS content",
+              format: props.format,
+              cause,
+            }),
+    });
+
+    const value = props.schemaKey
+      ? yield* decodeSchema(props.schemaKey, parsed.value, sourceLabel)
+      : parsed.value;
+
+    return yield* Effect.try({
+      try: () =>
+        materializeSecretValue(value, {
+          format: parsed.format,
+          ...(props.secrets ? { secrets: props.secrets } : {}),
+        }),
+      catch: (cause) =>
+        cause instanceof SopsSecretPathError
+          ? cause
+          : new SopsParseError({
+              message: "Failed to materialize decrypted SOPS content",
+              format: props.format,
+              cause,
+            }),
+    });
   });
 
 interface LoadedEncryptedSource {
@@ -534,6 +583,7 @@ const hashLoadedSource = (
             extract: props.extract ? revealString(props.extract) : undefined,
             sopsArgs: props.sopsArgs.map(revealString),
             secrets: props.secrets,
+            schemaKey: props.schemaKey,
             providerVersion: PROVIDER_VERSION,
             types: props.types,
           }),
@@ -649,6 +699,66 @@ const normalizeGeneratedTypes = (
   options: SopsGeneratedTypesInput,
 ): SopsGeneratedTypesOptions =>
   options === true ? {} : options;
+
+const registerSchema = (schema: SopsFileSchema): string => {
+  const key = stableStringify(schema.ast);
+  registeredSchemas.set(key, schema);
+  return key;
+};
+
+const decodeSchema = (
+  schemaKey: string,
+  value: unknown,
+  sourceLabel: string,
+): Effect.Effect<unknown, SopsSchemaError> =>
+  Effect.try({
+    try: () => {
+      const schema = registeredSchemas.get(schemaKey);
+      if (!schema) {
+        throw new Error(
+          "Schema was not registered in the current process before decrypting",
+        );
+      }
+      return Schema.decodeUnknownSync(schema)(value);
+    },
+    catch: (cause) =>
+      new SopsSchemaError({
+        message: `Failed to validate decrypted SOPS content from ${sourceLabel}`,
+        path: sourceLabel,
+        cause,
+      }),
+  });
+
+const stableStringify = (value: unknown): string =>
+  JSON.stringify(stableValue(value));
+
+const stableValue = (value: unknown): unknown => {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  if (typeof value === "function") {
+    return `[Function:${value.name}]`;
+  }
+
+  if (Array.isArray(value)) return value.map(stableValue);
+
+  if (typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, stableValue(child)]),
+    );
+  }
+
+  return String(value);
+};
 
 const formatTopLevelKeys = (keys: readonly string[]): string =>
   keys.length === 0 ? "(none)" : keys.join(", ");

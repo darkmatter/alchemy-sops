@@ -33,9 +33,16 @@ export class SopsSecretPathError extends Data.TaggedError(
   readonly path: string;
 }> {}
 
+export class SopsSchemaError extends Data.TaggedError("SopsSchemaError")<{
+  readonly message: string;
+  readonly path: string;
+  readonly cause?: unknown;
+}> {}
+
 export type SopsError =
   | SopsInputError
   | SopsFileReadError
   | SopsDecryptError
   | SopsParseError
-  | SopsSecretPathError;
+  | SopsSecretPathError
+  | SopsSchemaError;

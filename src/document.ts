@@ -26,35 +26,74 @@ export interface MaterializeSecretDocumentOptions {
   readonly secrets?: Record<string, string>;
 }
 
+export interface MaterializeSecretValueOptions {
+  readonly format: ResolvedSopsDocumentFormat;
+  readonly secrets?: Record<string, string>;
+}
+
+export interface ParsedSecretDocument {
+  readonly format: ResolvedSopsDocumentFormat;
+  readonly value: unknown;
+}
+
 export interface GenerateSecretTypesOptions {
   readonly exportName?: string;
 }
 
-export interface MaterializedSecretDocument {
+type MaterializedSecretDocumentBase = {
   readonly format: ResolvedSopsDocumentFormat;
   readonly data: SecretTree;
   readonly flat: SecretRecord;
   readonly secrets: SecretRecord;
   readonly topLevelKeys: readonly string[];
-}
+};
 
-export const materializeSecretDocument = (
+export type MaterializedSecretDocument<Value = never> =
+  MaterializedSecretDocumentBase &
+    ([Value] extends [never] ? {} : { readonly value: Value });
+
+export const parseSecretDocument = (
   plaintext: string,
   options: MaterializeSecretDocumentOptions = {},
-): MaterializedSecretDocument => {
+): ParsedSecretDocument => {
   const format = resolveDocumentFormat(options.format ?? "auto", options.path);
-  const parsed = parsePlaintext(plaintext, format);
-  const data = redactLeaves(parsed);
+  return {
+    format,
+    value: parsePlaintext(plaintext, format),
+  };
+};
+
+export const materializeSecretValue = <Value>(
+  value: Value,
+  options: MaterializeSecretValueOptions,
+): MaterializedSecretDocument<Value> => {
+  const data = redactLeaves(value);
   const flat = flattenSecretTree(data);
   const secrets = selectSecrets(flat, options.secrets);
 
   return {
-    format,
+    format: options.format,
+    value,
     data,
     flat,
     secrets,
     topLevelKeys: topLevelSecretKeys(data),
   };
+};
+
+export const materializeSecretDocument = (
+  plaintext: string,
+  options: MaterializeSecretDocumentOptions = {},
+): MaterializedSecretDocument => {
+  const parsed = parseSecretDocument(plaintext, options);
+  const { value: _value, ...materialized } = materializeSecretValue(
+    parsed.value,
+    {
+      format: parsed.format,
+      ...(options.secrets ? { secrets: options.secrets } : {}),
+    },
+  );
+  return materialized;
 };
 
 export const generateSecretTypes = (
@@ -170,6 +209,10 @@ const unquoteDotenvValue = (value: string): string => {
 };
 
 const redactLeaves = (value: unknown): SecretTree => {
+  if (Redacted.isRedacted(value)) {
+    return Redacted.make(stringifyScalar(Redacted.value(value)));
+  }
+
   if (Array.isArray(value)) {
     return value.map(redactLeaves);
   }
