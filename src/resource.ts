@@ -178,6 +178,9 @@ export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
 
   return Provider.succeed(SopsFileResource, {
     version: PROVIDER_VERSION,
+    list: Effect.fn(function* () {
+      return [];
+    }),
     read: Effect.fn(function* ({ output }) {
       return output;
     }),

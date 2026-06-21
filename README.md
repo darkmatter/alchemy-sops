@@ -16,6 +16,7 @@ native `sops-age` backend for age-encrypted JSON/YAML/dotenv files and keeps the
 - [Inputs](#inputs)
 - [Outputs](#outputs)
 - [Security note](#security-note)
+- [Troubleshooting](#troubleshooting)
 
 ## Install
 
@@ -308,3 +309,49 @@ status.
 `Redacted<string>` prevents accidental printing and logging, but Alchemy state
 stores still persist values so they can be revived later. Use a state store you
 trust for decrypted secrets.
+
+## Troubleshooting
+
+### `Output` type errors when passing `secrets.value` into `Cloudflare.Vite` / `Worker` env
+
+**Symptom:** TypeScript reports that `Output<…>` from `secrets.value` is not
+assignable to the `Output<…>` expected by `alchemy/Output` helpers (for example
+`Output.map`), often with a long path mentioning two different
+`node_modules/alchemy` versions and incompatible `bind(...)` return types
+(`RuntimeContext` vs `ExecutionContext`).
+
+**Cause:** Two copies of `alchemy` are installed. `alchemy-sops` decrypts via one
+instance (for example the version pulled in as its dependency), while your stack
+imports `alchemy`, `alchemy/Cloudflare`, and `alchemy/Output` from another.
+`Output` is not portable across versions — even patch differences in the Effect
+runtime context break assignability.
+
+**Fix:**
+
+1. **Use one `alchemy` version everywhere.** Pin the same release in your root /
+   catalog (for example `2.0.0-beta.43` or newer) and ensure every workspace
+   package that imports `alchemy` uses that pin, not an older catalog entry.
+2. **Deduplicate installs.** After aligning versions, run `bun install` (or your
+   package manager’s equivalent) and confirm only one `alchemy` appears under
+   `node_modules` (for Bun: `ls node_modules/.bun | grep '^alchemy@'` should
+   show a single version for app code).
+3. **Prefer `alchemy` as a peer, not a nested dependency.** `alchemy-sops` lists
+   `alchemy` as a `peerDependency` with a semver range so your project’s
+   `alchemy` is the one both the stack and `SopsFile` use. Avoid relying on a
+   nested copy bundled inside another package.
+
+**Example (monorepo catalog):**
+
+```json
+{
+  "catalog": {
+    "alchemy": "2.0.0-beta.57"
+  }
+}
+```
+
+Ensure `apps/*` and `packages/*` use `"alchemy": "catalog:"` (or the same exact
+version), then reinstall.
+
+If you still see two versions, check overrides / patched dependencies and any
+package that pins an older `alchemy` directly.

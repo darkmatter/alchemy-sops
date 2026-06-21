@@ -21,6 +21,8 @@ import {
   runSopsCli,
 } from "./sops.js";
 
+const CLOUDFLARE_SECRETS_STORE_PAGE_SIZE = 100;
+
 export interface CloudflareSecretsStoreRef {
   readonly accountId: string;
   readonly storeId: string;
@@ -175,7 +177,7 @@ export const CloudflareSopsSecretsAction = Action(
         .items({
           accountId: input.store.accountId,
           storeId: input.store.storeId,
-          perPage: 1000,
+          perPage: CLOUDFLARE_SECRETS_STORE_PAGE_SIZE,
         })
         .pipe(Stream.runCollect);
       const existing = new Map(
@@ -202,7 +204,7 @@ export const CloudflareSopsSecretsAction = Action(
             accountId: input.store.accountId,
             storeId: input.store.storeId,
             search: name,
-            perPage: 1000,
+            perPage: CLOUDFLARE_SECRETS_STORE_PAGE_SIZE,
           })
           .pipe(
             Stream.runCollect,

@@ -158,6 +158,39 @@ test.provider(
     }),
 );
 
+test.provider(
+  "uses a Cloudflare-valid page size when listing store secrets",
+  (stack) =>
+    Effect.gen(function* () {
+      cloudflare.reset();
+      cloudflare.rejectInvalidPerPage();
+      const fixture = yield* writeActionFixture("worker-secrets-page-size");
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* CloudflareSopsSecrets("WorkerSecretsPageSize", {
+            path: fixture.encryptedPath,
+            format: "json",
+            backend: "cli",
+            sopsBinary: fixture.sopsBinary,
+            store: {
+              accountId: "account-id",
+              storeId: "store-id",
+            },
+            secrets: {
+              API_TOKEN: "api.token",
+            },
+            comment: "imported by alchemy-sops",
+          });
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(deployed.imported[0]!.name).toBe("API_TOKEN");
+      expect(cloudflare.requests.list).toBeGreaterThan(0);
+    }),
+);
+
 interface MockSecret {
   readonly id: string;
   readonly name: string;
@@ -177,6 +210,7 @@ function createMockCloudflare() {
     patch: 0,
   };
   let nextId = 1;
+  let rejectInvalidPerPage = false;
 
   const server = Bun.serve({
     port: 0,
@@ -189,6 +223,23 @@ function createMockCloudflare() {
       if (path === secretsPath && request.method === "GET") {
         requests.list += 1;
         const page = Number(url.searchParams.get("page") ?? "1");
+        const perPage = Number(
+          url.searchParams.get("per_page") ??
+            url.searchParams.get("perPage") ??
+            "50",
+        );
+        if (rejectInvalidPerPage && perPage > 100) {
+          return Response.json(
+            {
+              success: false,
+              errors: [{ code: 1000, message: "invalid_per_page_parameter" }],
+              messages: [],
+              result: null,
+            },
+            { status: 400 },
+          );
+        }
+
         const search = url.searchParams.get("search");
         const result =
           page > 1
@@ -205,7 +256,7 @@ function createMockCloudflare() {
           result_info: {
             count: result.length,
             page,
-            per_page: 1000,
+            per_page: perPage,
             total_count: result.length,
           },
         });
@@ -308,6 +359,10 @@ function createMockCloudflare() {
       requests.list = 0;
       requests.patch = 0;
       nextId = 1;
+      rejectInvalidPerPage = false;
+    },
+    rejectInvalidPerPage: () => {
+      rejectInvalidPerPage = true;
     },
     stop: () => server.stop(true),
   };
