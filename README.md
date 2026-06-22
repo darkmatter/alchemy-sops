@@ -75,6 +75,11 @@ structured age-encrypted files, then falls back to the CLI when a local `path`
 source is available. Use `backend: "sops-age"` to require the native backend or
 `backend: "cli"` to force the binary.
 
+`path` can also be an ordered array of local SOPS files. Each file is decrypted
+independently and object documents are deep-merged in order, so later files
+override earlier ones. This is useful for `common.sops.json` plus stage-specific
+overrides without materializing plaintext between files.
+
 `SopsFileProvider({ memoize: true })` memoizes decrypt calls in the current
 process. This is useful when multiple lazy resource paths request the same
 encrypted source during one deploy. It does not replace resource `cache`; `cache`
@@ -247,7 +252,8 @@ Every string-like option accepts the same shapes as Alchemy `SecretInput`:
 
 Supported options:
 
-- `path`, `content`, or `url`: exactly one encrypted source is required
+- `path`, `content`, or `url`: exactly one encrypted source is required. `path`
+  may be an ordered array of local files, merged left to right after decryption.
 - `cwd`, `sopsBinary`
 - `backend`: `auto`, `sops-age`, or `cli`
 - `format`: `auto`, `json`, `yaml`, `dotenv`, `text`, or `binary`

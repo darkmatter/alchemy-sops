@@ -7,8 +7,11 @@ import * as Stream from "effect/Stream";
 
 import {
   type SecretRecord,
+  type SecretTree,
+  type ResolvedSopsDocumentFormat,
   type SopsDocumentFormat,
   materializeSecretDocument,
+  type MaterializedSecretDocument,
 } from "./document.js";
 import { SopsInputError } from "./errors.js";
 import { type MaybeRedactedString } from "./input.js";
@@ -35,7 +38,7 @@ export interface CloudflareSecretsStoreInput {
 
 export interface CloudflareSopsSecretsOptions {
   /** Local SOPS file read at plan time. Ciphertext is stored in Action state. */
-  readonly path: string;
+  readonly path: string | readonly string[];
   /** Optional working directory for relative paths and CLI execution. */
   readonly cwd?: string;
   /** Cloudflare Secrets Store resource or attrs returned by `Cloudflare.SecretsStore`. */
@@ -80,8 +83,8 @@ export interface CloudflareSopsSecretsOptions {
 
 export interface CloudflareSopsSecretsActionInput
   extends Omit<CloudflareSopsSecretsOptions, "path" | "store"> {
-  readonly path: string;
-  readonly content: string;
+  readonly path: string | readonly string[];
+  readonly content: string | readonly string[];
   readonly store: CloudflareSecretsStoreRef;
 }
 
@@ -161,13 +164,19 @@ export const CloudflareSopsSecretsAction = Action(
 
     return Effect.fn(function* (input: CloudflareSopsSecretsActionInput) {
       const plaintext = yield* decryptForAction(input);
-      const materialized = materializeSecretDocument(plaintext, {
-        format: input.format ?? "auto",
-        path: input.path,
-        ...(input.secrets ? { secrets: input.secrets } : {}),
-      });
+      const materialized = isReadonlyStringArray(plaintext)
+        ? materializeMergedSecretDocuments(plaintext, {
+            format: input.format ?? "auto",
+            path: formatPath(input.path),
+            ...(input.secrets ? { secrets: input.secrets } : {}),
+          })
+        : materializeSecretDocument(plaintext, {
+            format: input.format ?? "auto",
+            path: formatPath(input.path),
+            ...(input.secrets ? { secrets: input.secrets } : {}),
+          });
       yield* Effect.logInfo(
-        `Decrypted ${input.path}: top-level keys ${formatTopLevelKeys(
+        `Decrypted ${formatPath(input.path)}: top-level keys ${formatTopLevelKeys(
           materialized.topLevelKeys,
         )}`,
       );
@@ -284,7 +293,7 @@ export const CloudflareSopsSecretsAction = Action(
       return {
         accountId: input.store.accountId,
         storeId: input.store.storeId,
-        path: input.path,
+        path: formatPath(input.path),
         topLevelKeys: materialized.topLevelKeys,
         imported,
       };
@@ -362,39 +371,130 @@ export const cloudflareSecretName = (path: string): string => {
 
 const decryptForAction = (
   input: CloudflareSopsSecretsActionInput,
-): Effect.Effect<string, unknown> => {
+): Effect.Effect<string | readonly string[], unknown> => {
   const outputType =
     input.outputType ?? defaultOutputType(input.format ?? "auto");
-  const request: SopsCommandRequest = {
-    path: input.path,
-    content: input.content,
-    binary: input.sopsBinary ?? "sops",
-    args: input.sopsArgs ?? [],
-    env: commandEnv(input),
-    timeoutMs: input.timeoutMs ?? 30_000,
-    ...(input.cwd ? { cwd: input.cwd } : {}),
-    ...(input.inputType ? { inputType: input.inputType } : {}),
-    ...(outputType ? { outputType } : {}),
-    ...(input.extract ? { extract: input.extract } : {}),
+  const decryptOne = (path: string, content: string) => {
+    const request: SopsCommandRequest = {
+      path,
+      content,
+      binary: input.sopsBinary ?? "sops",
+      args: input.sopsArgs ?? [],
+      env: commandEnv(input),
+      timeoutMs: input.timeoutMs ?? 30_000,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+      ...(input.inputType ? { inputType: input.inputType } : {}),
+      ...(outputType ? { outputType } : {}),
+      ...(input.extract ? { extract: input.extract } : {}),
+    };
+
+    return defaultDecrypt(input.backend ?? "auto", input.format ?? "auto")(
+      request,
+    );
   };
 
-  return defaultDecrypt(input.backend ?? "auto", input.format ?? "auto")(
-    request,
-  );
+  if (isReadonlyStringArray(input.path) || isReadonlyStringArray(input.content)) {
+    const paths = isReadonlyStringArray(input.path) ? input.path : [input.path];
+    const contents = isReadonlyStringArray(input.content) ? input.content : [input.content];
+    return Effect.all(
+      contents.map((content, index) =>
+        decryptOne(paths[index] ?? formatPath(input.path), content),
+      ),
+    );
+  }
+
+  return decryptOne(input.path, input.content);
 };
 
 const readEncryptedFile = (
-  path: string,
+  path: string | readonly string[],
   cwd: string | undefined,
-): Effect.Effect<string> =>
+): Effect.Effect<string | readonly string[]> =>
   Effect.tryPromise(async () => {
     const { readFile } = await import("node:fs/promises");
     const { isAbsolute, resolve } = await import("node:path");
-    return readFile(
-      isAbsolute(path) ? path : resolve(cwd ?? process.cwd(), path),
-      "utf8",
-    );
+    const readOne = (item: string) =>
+      readFile(isAbsolute(item) ? item : resolve(cwd ?? process.cwd(), item), "utf8");
+    return isReadonlyStringArray(path) ? Promise.all(path.map(readOne)) : readOne(path);
   }).pipe(Effect.orDie);
+
+const materializeMergedSecretDocuments = (
+  plaintexts: readonly string[],
+  options: {
+    readonly format: SopsDocumentFormat;
+    readonly path: string;
+    readonly secrets?: Record<string, string>;
+  },
+): Omit<MaterializedSecretDocument<unknown>, "value"> => {
+  const values = plaintexts.map((plaintext) =>
+    materializeSecretDocument(plaintext, options),
+  );
+  const mergedFlat = Object.assign({}, ...values.map((value) => value.flat));
+  const mergedData = deepMergeAll(values.map((value) => value.data));
+  return {
+    format: values[0]?.format ?? resolveFallbackFormat(options.format),
+    data: mergedData,
+    flat: mergedFlat,
+    secrets: selectSecrets(mergedFlat, options.secrets),
+    topLevelKeys: Object.keys(mergedData),
+  };
+};
+
+const selectSecrets = (
+  flat: SecretRecord,
+  selectors: Record<string, string> | undefined,
+): SecretRecord => {
+  if (!selectors) return flat;
+  return Object.fromEntries(
+    Object.entries(selectors).map(([name, path]) => {
+      const value = flat[path];
+      if (!value) {
+        throw new SopsInputError({
+          message: `Secret path "${path}" was not found in decrypted SOPS content`,
+          field: "secrets",
+        });
+      }
+      return [name, value];
+    }),
+  );
+};
+
+const deepMergeAll = (values: readonly SecretTree[]): SecretTree => {
+  const merged: Record<string, SecretTree> = {};
+  for (const value of values) {
+    if (isPlainObject(value)) deepMerge(merged, value);
+  }
+  return merged;
+};
+
+const deepMerge = (
+  target: Record<string, SecretTree>,
+  source: Record<string, SecretTree>,
+): void => {
+  for (const [key, value] of Object.entries(source)) {
+    if (isPlainObject(value) && isPlainObject(target[key])) {
+      deepMerge(target[key], value);
+    } else {
+      target[key] = value;
+    }
+  }
+};
+
+const isPlainObject = (value: unknown): value is Record<string, SecretTree> =>
+  value !== null &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  !Redacted.isRedacted(value);
+
+const formatPath = (path: string | readonly string[]): string =>
+  isReadonlyStringArray(path) ? path.join(",") : path;
+
+const isReadonlyStringArray = (value: unknown): value is readonly string[] =>
+  Array.isArray(value);
+
+const resolveFallbackFormat = (
+  format: SopsDocumentFormat,
+): ResolvedSopsDocumentFormat => (format === "auto" ? "json" : format);
 
 const commandEnv = (
   input: Pick<

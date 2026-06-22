@@ -159,6 +159,41 @@ test.provider(
 );
 
 test.provider(
+  "imports secrets from ordered SOPS file arrays",
+  (stack) =>
+    Effect.gen(function* () {
+      cloudflare.reset();
+      const common = yield* writeActionFixture("worker-secrets-common");
+      const stage = yield* writeActionFixture("worker-secrets-stage");
+      yield* Effect.promise(() => writeFile(stage.encryptedPath, "ciphertext-stage"));
+
+      const imported = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* CloudflareSopsSecrets("WorkerSecretsArray", {
+            path: [common.encryptedPath, stage.encryptedPath],
+            format: "json",
+            backend: "cli",
+            sopsBinary: common.sopsBinary,
+            store: {
+              accountId: "account-id",
+              storeId: "store-id",
+            },
+            secrets: {
+              API_TOKEN: "api.token",
+            },
+          });
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(imported.path).toBe([common.encryptedPath, stage.encryptedPath].join(","));
+      expect(imported.topLevelKeys).toEqual(["api"]);
+      expect(imported.imported[0]!.name).toBe("API_TOKEN");
+      expect(cloudflare.secrets.get("API_TOKEN")?.value).toBe("ciphertext-stage");
+    }),
+);
+
+test.provider(
   "uses a Cloudflare-valid page size when listing store secrets",
   (stack) =>
     Effect.gen(function* () {

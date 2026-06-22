@@ -176,6 +176,52 @@ test.provider(
 );
 
 test.provider(
+  "decrypts and merges ordered path arrays",
+  (stack) =>
+    Effect.gen(function* () {
+      const commonPath = yield* writeEncryptedFixture("common.enc.json", "common-v1");
+      const stagePath = yield* writeEncryptedFixture("stage.enc.json", "stage-v1");
+      plaintextByPath.set(commonPath, () =>
+        JSON.stringify({ api: { token: "common", baseUrl: "https://api" } }),
+      );
+      plaintextByPath.set(stagePath, () =>
+        JSON.stringify({ api: { token: "stage" }, feature: { enabled: true } }),
+      );
+
+      const deployed = yield* stack.deploy(
+        Effect.gen(function* () {
+          const file = yield* SopsFile("MergedSecrets", {
+            path: [commonPath, stagePath],
+            format: "json",
+            secrets: {
+              token: "api.token",
+              baseUrl: "api.baseUrl",
+              enabled: "feature.enabled",
+            },
+          });
+
+          return {
+            path: file.path,
+            topLevelKeys: file.topLevelKeys,
+            token: Output.map(file.secrets, (secrets) => secrets.token!),
+            baseUrl: Output.map(file.secrets, (secrets) => secrets.baseUrl!),
+            enabled: Output.map(file.secrets, (secrets) => secrets.enabled!),
+          };
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(deployed.path).toBe([commonPath, stagePath].join(","));
+      expect(deployed.topLevelKeys).toEqual(["api", "feature"]);
+      expect(Redacted.value(deployed.token)).toBe("stage");
+      expect(Redacted.value(deployed.baseUrl)).toBe("https://api");
+      expect(Redacted.value(deployed.enabled)).toBe("true");
+      expect(decryptCalls.get(commonPath)).toBe(1);
+      expect(decryptCalls.get(stagePath)).toBe(1);
+    }),
+);
+
+test.provider(
   "validates schema-backed contents and returns typed output",
   (stack) =>
     Effect.gen(function* () {
