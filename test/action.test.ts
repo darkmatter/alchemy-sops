@@ -19,15 +19,17 @@ import { SopsInputError } from "../src/errors.ts";
 
 const cloudflare = createMockCloudflare();
 
-const { test, afterAll } = Test.make({
-  providers: Layer.mergeAll(
-    Credentials.fromApiToken({
-      apiToken: "test-token",
-      apiBaseUrl: cloudflare.baseUrl,
-    }),
-    Layer.succeed(Retry.Retry, { while: () => false }),
-  ),
-});
+const providers = Layer.mergeAll(
+  Credentials.fromApiToken({
+    apiToken: "test-token",
+    apiBaseUrl: cloudflare.baseUrl,
+  }),
+  Layer.succeed(Retry.Retry, { while: () => false }),
+);
+
+const { test, afterAll } = Test.make({ providers });
+
+const { test: devTest } = Test.make({ stage: "dev", providers });
 
 afterAll(Effect.sync(() => cloudflare.stop()));
 
@@ -223,6 +225,46 @@ test.provider(
 
       expect(deployed.imported[0]!.name).toBe("API_TOKEN");
       expect(cloudflare.requests.list).toBeGreaterThan(0);
+    }),
+);
+
+devTest.provider(
+  "skips the Cloudflare Secrets Store import in the dev stage",
+  (stack) =>
+    Effect.gen(function* () {
+      cloudflare.reset();
+      const fixture = yield* writeActionFixture("worker-secrets-dev");
+
+      const imported = yield* stack.deploy(
+        Effect.gen(function* () {
+          return yield* CloudflareSopsSecrets("WorkerSecretsDev", {
+            path: fixture.encryptedPath,
+            format: "json",
+            backend: "cli",
+            sopsBinary: fixture.sopsBinary,
+            store: {
+              accountId: "account-id",
+              storeId: "store-id",
+            },
+            secrets: {
+              API_TOKEN: "api.token",
+            },
+            comment: "imported by alchemy-sops",
+          });
+        }),
+      );
+      yield* stack.destroy();
+
+      expect(imported.accountId).toBe("account-id");
+      expect(imported.storeId).toBe("store-id");
+      expect(imported.path).toBe(fixture.encryptedPath);
+      expect(imported.imported).toEqual([]);
+      expect(imported.topLevelKeys).toEqual([]);
+      expect(cloudflare.requests.list).toBe(0);
+      expect(cloudflare.requests.create).toBe(0);
+      expect(cloudflare.requests.delete).toBe(0);
+      expect(cloudflare.requests.patch).toBe(0);
+      expect(cloudflare.secrets.size).toBe(0);
     }),
 );
 

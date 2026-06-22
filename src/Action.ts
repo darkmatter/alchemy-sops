@@ -1,5 +1,5 @@
 import * as secretsStore from "@distilled.cloud/cloudflare/secrets-store";
-import { Action } from "alchemy";
+import { Action, Stage } from "alchemy";
 import type * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
@@ -163,6 +163,25 @@ export const CloudflareSopsSecretsAction = Action(
     const patchSecret = yield* secretsStore.patchStoreSecret;
 
     return Effect.fn(function* (input: CloudflareSopsSecretsActionInput) {
+      // `alchemy dev` runs the Worker locally and forwards Secrets Store
+      // bindings as redacted values, so in the dev stage we skip the remote
+      // import entirely: return the store coordinates so Worker bindings still
+      // resolve, but write nothing to Cloudflare.
+      const stage = yield* Stage;
+      if (stage === "dev") {
+        yield* Effect.logInfo(
+          `Skipping Cloudflare Secrets Store import for ${formatPath(
+            input.path,
+          )} in the dev stage; secrets are forwarded as redacted values locally`,
+        );
+        return {
+          accountId: input.store.accountId,
+          storeId: input.store.storeId,
+          path: formatPath(input.path),
+          topLevelKeys: [],
+          imported: [],
+        } satisfies CloudflareSopsSecretsOutput;
+      }
       const plaintext = yield* decryptForAction(input);
       const materialized = isReadonlyStringArray(plaintext)
         ? materializeMergedSecretDocuments(plaintext, {
