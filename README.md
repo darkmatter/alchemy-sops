@@ -96,6 +96,49 @@ dot-path selection, and `types: true` or `types: { exportName: "AppSecrets" }`
 still returns generated TypeScript definitions in `secrets.types`; no files are
 written.
 
+## Typed from a JSON import
+
+TypeScript types JSON imports natively. Pass the imported encrypted SOPS
+document as `json`, and that inferred type flows through to `secrets.data` —
+with no `schema` and no `secrets` keys to declare:
+
+```ts
+import * as Alchemy from "alchemy";
+import * as Output from "alchemy/Output";
+import { SopsFile, SopsFileProvider } from "alchemy-sops";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import encrypted from "./secrets.enc.json" with { type: "json" };
+
+export default Alchemy.Stack(
+  "App",
+  {
+    providers: SopsFileProvider(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const secrets = yield* SopsFile("Secrets", {
+      json: encrypted,
+      ageKey: Config.redacted("SOPS_AGE_KEY"),
+    });
+
+    // secrets.data is fully typed from the import: scalar leaves are
+    // Redacted<string> and the top-level `sops` metadata key is removed.
+    return {
+      databaseUrl: Output.map(secrets.data, (data) => data.database.url),
+    };
+  }),
+);
+```
+
+The encrypted SOPS JSON keeps its plaintext key structure, so importing it
+gives TypeScript the document shape for free. At runtime the object is
+re-serialized and decrypted as inline `content`; values and key order are
+preserved, so the SOPS MAC still verifies. Every scalar leaf is mapped to
+`Redacted<string>` via the exported `SopsRedactedDocument<T>` type, matching
+the redacted `data` output. Reach for `schema` instead when you also want
+runtime validation or non-redacted leaf types.
+
 ## Cloudflare Secrets Store Action
 
 Use `CloudflareSopsSecrets` when Cloudflare Workers should receive secrets from
@@ -252,8 +295,10 @@ Every string-like option accepts the same shapes as Alchemy `SecretInput`:
 
 Supported options:
 
-- `path`, `content`, or `url`: exactly one encrypted source is required. `path`
-  may be an ordered array of local files, merged left to right after decryption.
+- `path`, `content`, `url`, or `json`: exactly one encrypted source is
+  required. `path` may be an ordered array of local files, merged left to right
+  after decryption. `json` accepts an imported (encrypted) SOPS JSON document,
+  drives the typed `data` output, and defaults `format` to `json`.
 - `cwd`, `sopsBinary`
 - `backend`: `auto`, `sops-age`, or `cli`
 - `format`: `auto`, `json`, `yaml`, `dotenv`, `text`, or `binary`
@@ -293,7 +338,8 @@ that field by reading `path`.
 
 The resource returns:
 
-- `data`: nested document with scalar leaves redacted
+- `data`: nested document with scalar leaves redacted, typed from the imported
+  document when `json` is used
 - `flat`: dot-path map of all redacted leaves
 - `secrets`: selected redacted leaves, or all leaves when `secrets` is omitted
 - `value`: schema-validated typed document when `schema` was provided

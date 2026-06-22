@@ -61,10 +61,47 @@ export type SopsGeneratedTypesInput = true | SopsGeneratedTypesOptions;
 export type SopsFileSchema = Schema.Struct<Schema.Struct.Fields> &
   Schema.Decoder<unknown>;
 
+/**
+ * Removes the top-level SOPS metadata key from a JSON-imported document type.
+ * Encrypted SOPS JSON keeps its plaintext key structure and only adds a `sops`
+ * metadata object; the decrypted document never contains that key.
+ */
+export type OmitSopsMetadata<T> = T extends object ? Omit<T, "sops"> : T;
+
+/**
+ * Maps every scalar leaf of a JSON-imported document type to
+ * `Redacted<string>`, mirroring the runtime `data` output where decrypted
+ * scalars are stringified and wrapped in `Redacted`. Object and array structure
+ * is preserved.
+ */
+export type RedactSecretLeaves<T> = T extends ReadonlyArray<infer U>
+  ? ReadonlyArray<RedactSecretLeaves<U>>
+  : T extends object
+    ? { readonly [K in keyof T]: RedactSecretLeaves<T[K]> }
+    : Redacted.Redacted<string>;
+
+/**
+ * The typed `data` shape returned by {@link SopsFile} when an imported JSON
+ * document drives the types: SOPS metadata removed and every scalar leaf
+ * redacted. TypeScript infers the source type from the JSON import itself, so
+ * no schema or key declarations are required.
+ */
+export type SopsRedactedDocument<T> = RedactSecretLeaves<OmitSopsMetadata<T>>;
+
 export interface SopsFileOptions<R = never> {
   readonly path?: SecretStringInput<R> | readonly SecretStringInput<R>[];
   readonly content?: SecretStringInput<R>;
   readonly url?: SecretStringInput<R>;
+  /**
+   * An imported (encrypted) SOPS JSON document, e.g.
+   * `import secrets from "./secrets.enc.json" with { type: "json" }`.
+   *
+   * At runtime the object is serialized to JSON and decrypted as `content`. At
+   * the type level its inferred shape drives a fully typed, redacted `data`
+   * output via {@link SopsRedactedDocument} — no `schema` or `secrets` keys
+   * required.
+   */
+  readonly json?: object;
   readonly cwd?: SecretStringInput<R>;
   readonly format?: SopsDocumentFormat | SecretStringInput<R>;
   readonly inputType?: SopsCliFormat | SecretStringInput<R>;
@@ -107,11 +144,11 @@ export interface SopsFileProps {
   readonly retry: Required<SopsRetryOptions>;
 }
 
-export type SopsFileAttributes<Value = never> = {
+export type SopsFileAttributes<Value = never, Data = SecretTree> = {
   readonly path: string;
   readonly format: Exclude<SopsDocumentFormat, "auto">;
   readonly sourceHash: string;
-  readonly data: SecretTree;
+  readonly data: Data;
   readonly flat: SecretRecord;
   readonly secrets: SecretRecord;
   readonly topLevelKeys: readonly string[];
@@ -119,10 +156,10 @@ export type SopsFileAttributes<Value = never> = {
   readonly version: number;
 } & ([Value] extends [never] ? {} : { readonly value: Value });
 
-export type SopsFileResource<Value = never> = AlchemyResource<
+export type SopsFileResource<Value = never, Data = SecretTree> = AlchemyResource<
   "Sops.File",
   SopsFileProps,
-  SopsFileAttributes<Value>
+  SopsFileAttributes<Value, Data>
 >;
 
 export interface SopsFileProviderOptions {
@@ -132,6 +169,7 @@ export interface SopsFileProviderOptions {
 
 export const SopsFileResource = Resource<SopsFileResource>("Sops.File");
 
+// Schema-driven typing: an explicit `effect/Schema` validates and types `value`.
 export function SopsFile<S extends SopsFileSchema, R = never>(
   id: string,
   options: SopsFileOptions<R> & { readonly schema: S },
@@ -140,11 +178,14 @@ export function SopsFile<S extends SopsFileSchema, R = never>(
   never,
   R | Provider.Provider<SopsFileResource>
 >;
-export function SopsFile<R = never>(
+// JSON-import typing: TypeScript infers the document shape from the imported
+// `json` object and propagates it to a redacted `data` output. No `schema` or
+// `secrets` declarations are required.
+export function SopsFile<const Shape extends object, R = never>(
   id: string,
-  options: SopsFileOptions<R>,
+  options: SopsFileOptions<R> & { readonly json: Shape },
 ): Effect.Effect<
-  SopsFileResource,
+  SopsFileResource<never, SopsRedactedDocument<Shape>>,
   never,
   R | Provider.Provider<SopsFileResource>
 >;
@@ -155,8 +196,20 @@ export function SopsFile<R = never>(
   SopsFileResource,
   never,
   R | Provider.Provider<SopsFileResource>
+>;
+export function SopsFile(
+  id: string,
+  options: SopsFileOptions<any>,
+): Effect.Effect<
+  SopsFileResource<any, any>,
+  never,
+  Provider.Provider<SopsFileResource>
 > {
-  return SopsFileResource(id, normalizeOptions(options));
+  return SopsFileResource(id, normalizeOptions(options)) as Effect.Effect<
+    SopsFileResource<any, any>,
+    never,
+    Provider.Provider<SopsFileResource>
+  >;
 }
 
 export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
@@ -277,15 +330,23 @@ const normalizeOptions = <R>(
     const path = yield* resolveOptionalPathInput(options.path);
     const content = yield* resolveOptionalSecretStringInput(options.content);
     const url = yield* resolveOptionalSecretStringInput(options.url);
+    // An imported JSON document is serialized back to its ciphertext form and
+    // decrypted as inline `content`. Values and key order are preserved, so the
+    // SOPS MAC still verifies.
+    const jsonContent =
+      options.json !== undefined ? JSON.stringify(options.json) : undefined;
     validateSourceOptions({
       ...(path !== undefined ? { path } : {}),
       ...(content !== undefined ? { content } : {}),
       ...(url !== undefined ? { url } : {}),
+      ...(jsonContent !== undefined ? { json: jsonContent } : {}),
     });
 
     const cwd = yield* resolveOptionalSecretStringInput(options.cwd);
     const format = normalizeDocumentFormat(
-      yield* resolveSecretStringInput(options.format ?? "auto"),
+      yield* resolveSecretStringInput(
+        options.format ?? (jsonContent !== undefined ? "json" : "auto"),
+      ),
       "format",
     );
     const inputType = normalizeOptionalCliFormat(
@@ -320,7 +381,11 @@ const normalizeOptions = <R>(
         delay: options.retry?.delay ?? "250 millis",
       },
       ...(path !== undefined ? { path } : {}),
-      ...(content !== undefined ? { content } : {}),
+      ...(content !== undefined
+        ? { content }
+        : jsonContent !== undefined
+          ? { content: jsonContent }
+          : {}),
       ...(url !== undefined ? { url } : {}),
       ...(cwd ? { cwd } : {}),
       ...(inputType ? { inputType } : {}),
@@ -367,8 +432,9 @@ const validateSourceOptions = (source: {
   readonly path?: MaybeRedactedString | readonly MaybeRedactedString[];
   readonly content?: MaybeRedactedString;
   readonly url?: MaybeRedactedString;
+  readonly json?: MaybeRedactedString;
 }): void => {
-  const provided = [source.path, source.content, source.url].filter(
+  const provided = [source.path, source.content, source.url, source.json].filter(
     (value) => value !== undefined,
   );
 
@@ -376,7 +442,7 @@ const validateSourceOptions = (source: {
 
   throw new SopsInputError({
     message:
-      "Exactly one SOPS source must be provided: path, content, or url",
+      "Exactly one SOPS source must be provided: path, content, url, or json",
     field: "path",
   });
 };

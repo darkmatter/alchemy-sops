@@ -19,6 +19,8 @@ export {
   SopsFileProvider,
   SopsFileResource,
   providers,
+  type OmitSopsMetadata,
+  type RedactSecretLeaves,
   type SopsFileAttributes,
   type SopsFileOptions,
   type SopsFileProps,
@@ -27,6 +29,7 @@ export {
   type SopsFileSchema,
   type SopsGeneratedTypesInput,
   type SopsGeneratedTypesOptions,
+  type SopsRedactedDocument,
   type SopsRetryOptions,
 } from "./resource.js";
 export {

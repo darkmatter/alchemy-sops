@@ -54,6 +54,7 @@
   "devDependencies": {
     "@types/bun": "^1.3.2",
     "alchemy": "2.0.0-beta.57",
+    "expect-type": "1.3.0",
     "typescript": "^5.9.3"
   },
   "peerDependencies": {
