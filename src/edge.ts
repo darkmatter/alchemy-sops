@@ -1,4 +1,11 @@
 export {
+  decodeEffect,
+  type DecryptOptions,
+  type EncryptedFor,
+  type EncryptedScalar,
+  type SopsMetadata,
+} from "./Schema.js";
+export {
   runSopsAge,
 } from "./sops-age.js";
 export {

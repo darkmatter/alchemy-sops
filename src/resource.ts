@@ -488,7 +488,7 @@ const decryptWithRetry = (
   decrypt(request).pipe(
     Effect.retry({
       schedule: Schedule.spaced(retry.delay).pipe(
-        Schedule.both(Schedule.recurs(retry.times)),
+        Schedule.upTo({ times: retry.times }),
       ),
     }),
   );
