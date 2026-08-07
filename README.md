@@ -13,8 +13,9 @@ custom SOPS flags, and non-age backends.
 
 - [Install](#install)
 - [Changelog](./CHANGELOG.md)
-- [Alchemy-free Schema decoding](#alchemy-free-schema-decoding)
 - [Usage](#usage)
+- [Typed from a JSON import](#typed-from-a-json-import)
+- [Alchemy-free Schema decoding](#alchemy-free-schema-decoding)
 - [Cloudflare Secrets Store Action](#cloudflare-secrets-store-action)
 - [Edge usage](#edge-usage)
 - [Inputs](#inputs)
@@ -38,84 +39,6 @@ bun add alchemy
 The native backend does not require a `sops` binary. Install `sops` only when
 you need `backend: "cli"` or automatic fallback for SOPS features not supported
 by `sops-age`. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
-
-## Alchemy-free Schema decoding
-
-Use `alchemy-sops/Schema` to decrypt an imported SOPS JSON document and decode
-it with an Effect 4 `Schema.Struct` without configuring an Alchemy Stack. The
-curried API defines the schema once, then decodes each encrypted import with
-`Schema.decodeEffect(AppSecrets)(encrypted)`:
-
-```ts
-import * as Schema from "alchemy-sops/Schema";
-import * as Effect from "effect/Effect";
-import * as EffectSchema from "effect/Schema";
-import encrypted from "./secrets.enc.json" with { type: "json" };
-
-const AppSecrets = EffectSchema.Struct({
-  database: EffectSchema.Struct({
-    url: EffectSchema.RedactedFromValue(EffectSchema.String),
-  }),
-  api: EffectSchema.Struct({
-    token: EffectSchema.RedactedFromValue(EffectSchema.String),
-  }),
-});
-
-const loadSecrets = Effect.gen(function* () {
-  return yield* Schema.decodeEffect(AppSecrets)(encrypted);
-});
-```
-
-This subpath and `alchemy-sops/edge` are Alchemy-free. The package root remains
-the Alchemy resource API and therefore requires the optional `alchemy` peer at
-runtime.
-
-At compile time, `EncryptedFor<S>` derives required keys, nesting, and property
-optionality from `Schema.Codec.Encoded<S>`. TypeScript checks that structure
-against the inferred JSON import shape and requires the top-level `sops`
-metadata object. Encrypted scalar leaves accept JSON scalar values, so
-TypeScript cannot prove that a ciphertext decrypts to the expected plaintext
-value or satisfies a refinement.
-
-At runtime, `decodeEffect` serializes the imported document, decrypts it with the
-native `sops-age` backend, then decodes the decrypted JSON with
-`Schema.decodeUnknownEffect` through `Schema.fromJsonString`. Missing required
-fields, invalid decoded types, failed transformations, and failed refinements
-produce a `Schema.SchemaError` in the Effect error channel. Decryption failures
-produce `SopsDecryptError`.
-
-Pass Effect parse options when stricter document validation is required:
-
-```ts
-const loadStrictSecrets = Effect.gen(function* () {
-  return yield* Schema.decodeEffect(AppSecrets, {
-    errors: "all",
-    onExcessProperty: "error",
-  })(encrypted);
-});
-```
-
-Identity discovery follows `sops-age` defaults. To supply an age identity
-explicitly, keep it redacted and load the real value from secret configuration:
-
-```ts
-import * as Redacted from "effect/Redacted";
-
-const ageKey = Redacted.make("<age-secret-key>");
-
-const loadWithKey = Effect.gen(function* () {
-  return yield* Schema.decodeEffect(AppSecrets)(encrypted, { ageKey });
-});
-```
-
-Treat the decoded object as secret material. Never log it or reveal decoded
-`Redacted` values for inspection; reveal them only at the provider boundary
-that must consume the plaintext.
-
-This API intentionally accepts imported JSON only so the encrypted document
-shape remains available to TypeScript. Use `SopsFile` or the low-level edge APIs
-for path, URL, extract, and ordered merge workflows; those sources cannot carry
-a static JSON import shape.
 
 ## Usage
 
@@ -227,6 +150,84 @@ preserved, so the SOPS MAC still verifies. Every scalar leaf is mapped to
 `Redacted<string>` via the exported `SopsRedactedDocument<T>` type, matching
 the redacted `data` output. Reach for `schema` instead when you also want
 runtime validation or non-redacted leaf types.
+
+## Alchemy-free Schema decoding
+
+Use `alchemy-sops/Schema` to decrypt an imported SOPS JSON document and decode
+it with an Effect 4 `Schema.Struct` without configuring an Alchemy Stack. The
+curried API defines the schema once, then decodes each encrypted import with
+`Schema.decodeEffect(AppSecrets)(encrypted)`:
+
+```ts
+import * as Schema from "alchemy-sops/Schema";
+import * as Effect from "effect/Effect";
+import * as EffectSchema from "effect/Schema";
+import encrypted from "./secrets.enc.json" with { type: "json" };
+
+const AppSecrets = EffectSchema.Struct({
+  database: EffectSchema.Struct({
+    url: EffectSchema.RedactedFromValue(EffectSchema.String),
+  }),
+  api: EffectSchema.Struct({
+    token: EffectSchema.RedactedFromValue(EffectSchema.String),
+  }),
+});
+
+const loadSecrets = Effect.gen(function* () {
+  return yield* Schema.decodeEffect(AppSecrets)(encrypted);
+});
+```
+
+This subpath and `alchemy-sops/edge` are Alchemy-free. The package root remains
+the Alchemy resource API and therefore requires the optional `alchemy` peer at
+runtime.
+
+At compile time, `EncryptedFor<S>` derives required keys, nesting, and property
+optionality from `Schema.Codec.Encoded<S>`. TypeScript checks that structure
+against the inferred JSON import shape and requires the top-level `sops`
+metadata object. Encrypted scalar leaves accept JSON scalar values, so
+TypeScript cannot prove that a ciphertext decrypts to the expected plaintext
+value or satisfies a refinement.
+
+At runtime, `decodeEffect` serializes the imported document, decrypts it with the
+native `sops-age` backend, then decodes the decrypted JSON with
+`Schema.decodeUnknownEffect` through `Schema.fromJsonString`. Missing required
+fields, invalid decoded types, failed transformations, and failed refinements
+produce a `Schema.SchemaError` in the Effect error channel. Decryption failures
+produce `SopsDecryptError`.
+
+Pass Effect parse options when stricter document validation is required:
+
+```ts
+const loadStrictSecrets = Effect.gen(function* () {
+  return yield* Schema.decodeEffect(AppSecrets, {
+    errors: "all",
+    onExcessProperty: "error",
+  })(encrypted);
+});
+```
+
+Identity discovery follows `sops-age` defaults. To supply an age identity
+explicitly, keep it redacted and load the real value from secret configuration:
+
+```ts
+import * as Redacted from "effect/Redacted";
+
+const ageKey = Redacted.make("<age-secret-key>");
+
+const loadWithKey = Effect.gen(function* () {
+  return yield* Schema.decodeEffect(AppSecrets)(encrypted, { ageKey });
+});
+```
+
+Treat the decoded object as secret material. Never log it or reveal decoded
+`Redacted` values for inspection; reveal them only at the provider boundary
+that must consume the plaintext.
+
+This API intentionally accepts imported JSON only so the encrypted document
+shape remains available to TypeScript. Use `SopsFile` or the low-level edge APIs
+for path, URL, extract, and ordered merge workflows; those sources cannot carry
+a static JSON import shape.
 
 ## Cloudflare Secrets Store Action
 
