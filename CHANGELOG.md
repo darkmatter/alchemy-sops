@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.7.0 - 2026-08-09
+
+### Added
+
+- Added the Alchemy-free `alchemy-sops/Config` entrypoint, which exposes a SOPS
+  document as an Effect `ConfigProvider`. Alchemy resolves provider credentials
+  through `Config.redacted`/`Config.string`, so a deploy can authenticate from an
+  encrypted document with nothing in the environment and no `sops exec-env`
+  wrapper.
+- Added `provideCredentials`, which supplies the provider to both a stack's
+  `providers` and `state` layers. The state store initializes first and resolves
+  credentials independently, so wiring only `providers` fails during state
+  initialization.
+
+```ts
+import * as SopsConfig from "alchemy-sops/Config";
+
+export default Alchemy.Stack(
+  "MyApp",
+  SopsConfig.provideCredentials(
+    { path: "secrets.sops.json" },
+    { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  ),
+  body,
+);
+```
+
+Decryption is lazy and memoized, and `layerAdd` registers the document behind
+the environment, so an ambient credential still wins and the document is never
+decrypted on that path. A path the document lacks is reported as absent rather
+than as a failure, so `ConfigProvider.orElse` composition behaves normally.
+
+### Changed
+
+- Moved backend selection into `src/backend.ts` so the Alchemy-free entrypoints
+  share the same `auto`/`cli`/`sops-age` resolution as `SopsFile`.
+
+### Fixed
+
+- Pinned the `effect` dev dependency to `4.0.0-beta.102`. `beta.105` removed
+  `Schema.TaggedErrorClass`, which the `@distilled.cloud/core` bundled with
+  `alchemy@2.0.0-beta.70` still calls, so the suite failed to load Alchemy at
+  all. The peer range is unchanged, so this does not constrain consumers.
+- Restored the typecheck against `@distilled.cloud/cloudflare@0.30.3`, which
+  widened a secret's `status` to an open union and tightened `Output` variance.
+  `CloudflareSopsSecretsOutput` now declares the same open union.
+
 ## 0.6.0 - 2026-08-07
 
 ### Added
@@ -19,7 +66,7 @@ const AppSecrets = EffectSchema.Struct({
   token: EffectSchema.RedactedFromValue(EffectSchema.String),
 });
 
-const secrets = yield* Schema.decodeEffect(AppSecrets)(encrypted);
+const secrets = yield * Schema.decodeEffect(AppSecrets)(encrypted);
 ```
 
 ### Changed

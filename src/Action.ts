@@ -103,7 +103,11 @@ export interface CloudflareSopsSecretsOutput {
     readonly name: string;
     readonly path: string;
     readonly secretId: string;
-    readonly status: "pending" | "active" | "deleted";
+    /**
+     * Cloudflare's documented statuses, kept open because the API returns the
+     * status verbatim and may add values without a breaking change here.
+     */
+    readonly status: "pending" | "active" | "deleted" | (string & {});
   }[];
 }
 

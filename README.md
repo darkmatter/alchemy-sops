@@ -16,6 +16,7 @@ custom SOPS flags, and non-age backends.
 - [Usage](#usage)
 - [Typed from a JSON import](#typed-from-a-json-import)
 - [Alchemy-free Schema decoding](#alchemy-free-schema-decoding)
+- [Provider credentials from a ConfigProvider](#provider-credentials-from-a-configprovider)
 - [Cloudflare Secrets Store Action](#cloudflare-secrets-store-action)
 - [Edge usage](#edge-usage)
 - [Inputs](#inputs)
@@ -229,6 +230,74 @@ shape remains available to TypeScript. Use `SopsFile` or the low-level edge APIs
 for path, URL, extract, and ordered merge workflows; those sources cannot carry
 a static JSON import shape.
 
+## Provider credentials from a ConfigProvider
+
+`SopsFile` decrypts secrets _inside_ a stack, which is too late for the
+credentials the stack itself needs to authenticate. `alchemy-sops/Config` covers
+that earlier moment: it turns a SOPS document into an Effect `ConfigProvider`,
+and because Alchemy resolves provider credentials through `Config.redacted` /
+`Config.string` rather than reading `process.env` directly, a deploy can
+authenticate with nothing in the environment — no `sops exec-env` wrapper and no
+exported variables.
+
+```ts
+import * as SopsConfig from "alchemy-sops/Config";
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export default Alchemy.Stack(
+  "MyApp",
+  SopsConfig.provideCredentials(
+    {
+      path: "secrets.sops.json",
+      secrets: {
+        CLOUDFLARE_API_TOKEN: "secrets.CLOUDFLARE_API_TOKEN",
+        CLOUDFLARE_ACCOUNT_ID: "secrets.CLOUDFLARE_ACCOUNT_ID",
+      },
+    },
+    { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  ),
+  body,
+);
+```
+
+Use `provideCredentials` rather than wiring the layer yourself: a stack's state
+store initializes _before_ its providers and resolves credentials
+independently, so supplying the layer to only `providers` fails during state
+initialization with a missing-credential error that points nowhere near the
+cause.
+
+The `secrets` map is optional. Without it the decrypted document is exposed as
+it is, and nested values are addressed with `Config.nested`. With it, a nested
+document answers flat lookups, which is what provider credentials expect — so
+there is no need to flatten the document on disk.
+
+Decryption is lazy and happens at most once. `layerAdd` registers the provider
+_behind_ the environment, so an ambient `CLOUDFLARE_API_TOKEN=… bun run deploy`
+still wins and the document is never decrypted on that path:
+
+```ts
+import * as SopsConfig from "alchemy-sops/Config";
+
+const credentials = SopsConfig.layerAdd({ path: "secrets.sops.json" });
+// or SopsConfig.layerAdd({ ... }, { asPrimary: true }) to consult SOPS first,
+// or SopsConfig.layer({ ... }) to replace the ambient provider outright.
+```
+
+A path the document does not contain is reported as _absent_ rather than as a
+failure, so composing with `ConfigProvider.orElse` and other providers behaves
+the way Effect expects. Only an unreadable or undecryptable document fails, as a
+`ConfigProvider.SourceError` that names the source but never includes decrypted
+content.
+
+This entry point does not import `alchemy`, so it is usable from non-Alchemy
+programs that just want SOPS-backed configuration.
+
+> **Alchemy only consults environment-style credentials non-interactively when
+> `CI=1`.** Otherwise it requires a configured profile and refuses to continue,
+> which means the `ConfigProvider` is never reached. Set `CI=1` in automation,
+> or run `alchemy login` for interactive use.
+
 ## Cloudflare Secrets Store Action
 
 Use `CloudflareSopsSecrets` when Cloudflare Workers should receive secrets from
@@ -251,10 +320,7 @@ A stack using the Action needs:
 ```ts
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import {
-  CloudflareSopsSecrets,
-  cloudflareSopsWorkerBindings,
-} from "alchemy-sops";
+import { CloudflareSopsSecrets, cloudflareSopsWorkerBindings } from "alchemy-sops";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
@@ -286,10 +352,7 @@ export default Alchemy.Stack(
     });
     yield* worker.bind(
       "sops-secrets",
-      cloudflareSopsWorkerBindings(imported, [
-        "API_TOKEN",
-        "DATABASE_URL",
-      ]),
+      cloudflareSopsWorkerBindings(imported, ["API_TOKEN", "DATABASE_URL"]),
     );
 
     return {
@@ -308,12 +371,13 @@ to the Secrets Store secret with the same name. Pass an object when the Worker
 binding name should differ from the stored secret name:
 
 ```ts
-yield* worker.bind(
-  "sops-secrets",
-  cloudflareSopsWorkerBindings(imported, {
-    API_TOKEN: "WORKER_API_TOKEN",
-  }),
-);
+yield *
+  worker.bind(
+    "sops-secrets",
+    cloudflareSopsWorkerBindings(imported, {
+      API_TOKEN: "WORKER_API_TOKEN",
+    }),
+  );
 ```
 
 Run the stack with your normal Alchemy deploy command. The Action runs when its
@@ -335,20 +399,22 @@ already available and you want to pass the Action input yourself:
 import { CloudflareSopsSecretsAction } from "alchemy-sops";
 import * as Redacted from "effect/Redacted";
 
-const imported = yield* CloudflareSopsSecretsAction("WorkerSecrets", {
-  path: "secrets.enc.yaml",
-  content: encryptedSopsYaml,
-  format: "yaml",
-  backend: "sops-age",
-  store: {
-    accountId: "account-id",
-    storeId: "store-id",
-  },
-  ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
-  secrets: {
-    API_TOKEN: "api.token",
-  },
-});
+const imported =
+  yield *
+  CloudflareSopsSecretsAction("WorkerSecrets", {
+    path: "secrets.enc.yaml",
+    content: encryptedSopsYaml,
+    format: "yaml",
+    backend: "sops-age",
+    store: {
+      accountId: "account-id",
+      storeId: "store-id",
+    },
+    ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
+    secrets: {
+      API_TOKEN: "api.token",
+    },
+  });
 ```
 
 ## Edge usage
@@ -359,12 +425,14 @@ encrypted content or a URL source with the native backend:
 ```ts
 import { SopsFile } from "alchemy-sops";
 
-const secrets = yield* SopsFile("WorkerSecrets", {
-  content: encryptedSopsJson,
-  format: "json",
-  backend: "sops-age",
-  ageKey: workerEnv.SOPS_AGE_KEY,
-});
+const secrets =
+  yield *
+  SopsFile("WorkerSecrets", {
+    content: encryptedSopsJson,
+    format: "json",
+    backend: "sops-age",
+    ageKey: workerEnv.SOPS_AGE_KEY,
+  });
 ```
 
 The Alchemy resource entrypoint still imports Alchemy. For code that is bundled
@@ -453,6 +521,27 @@ stores still persist values so they can be revived later. Use a state store you
 trust for decrypted secrets.
 
 ## Troubleshooting
+
+### `TypeError: undefined is not an object (evaluating 'impl.base.get')` when providing a ConfigProvider
+
+**Symptom:** A stack using `alchemy-sops/Config` dies immediately with a
+`TypeError` inside `effect/Context.js` at `lookup`, with no mention of SOPS or
+configuration. Stack frames reference two different `effect` paths, for example
+`effect@4.0.0-beta.102` and `effect@4.0.0-beta.105`.
+
+**Cause:** Two copies of `effect` are installed. `ConfigProvider` is a
+`Context.Reference`, so its identity is per-instance: a provider built by one
+copy of `effect` cannot be read by a stack running another. This surfaces most
+often when the layer is constructed in a shared workspace package that resolves
+a different `effect` than the app.
+
+**Fix:** Align `effect` to a single version across the workspace and reinstall.
+For Bun, `ls node_modules/.bun | grep '^effect@'` should show one version for
+application code. `effect` is a peer dependency of `alchemy-sops` for exactly
+this reason — let the app own the version rather than nesting a second copy.
+
+If a shared package must expose credentials, have it return plain data and let
+each stack build the provider with its own `effect` import.
 
 ### `Output` type errors when passing `secrets.value` into `Cloudflare.Vite` / `Worker` env
 

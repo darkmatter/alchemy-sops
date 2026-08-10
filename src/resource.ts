@@ -8,6 +8,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
+import { defaultDecrypt } from "./backend.js";
 import {
   type GenerateSecretTypesOptions,
   type MaterializedSecretDocument,
@@ -44,8 +45,6 @@ import {
   type SopsDecrypt,
   type SopsDecryptMemoizeOptions,
   memoizeDecrypt,
-  runSopsAge,
-  runSopsCli,
 } from "./sops.js";
 
 const PROVIDER_VERSION = 1;
@@ -197,18 +196,17 @@ export function SopsFile<R = never>(
   never,
   R | Provider.Provider<SopsFileResource>
 >;
+// The implementation signature is not visible to callers, so it stays loose:
+// `SopsFileAttributes` only carries `value` when a schema is present, so no
+// single concrete type is compatible with every overload above.
 export function SopsFile(
   id: string,
   options: SopsFileOptions<any>,
-): Effect.Effect<
-  SopsFileResource<any, any>,
-  never,
-  Provider.Provider<SopsFileResource>
-> {
+): Effect.Effect<any, never, any> {
   return SopsFileResource(id, normalizeOptions(options)) as Effect.Effect<
-    SopsFileResource<any, any>,
+    any,
     never,
-    Provider.Provider<SopsFileResource>
+    any
   >;
 }
 
@@ -491,46 +489,6 @@ const decryptWithRetry = (
         Schedule.upTo({ times: retry.times }),
       ),
     }),
-  );
-
-const defaultDecrypt = (
-  backend: SopsBackend,
-  format: SopsDocumentFormat,
-): SopsDecrypt => {
-  switch (backend) {
-    case "cli":
-      return runSopsCli;
-    case "sops-age":
-      return runSopsAge;
-    case "auto":
-      return format === "binary" || format === "text"
-        ? runSopsCli
-        : runSopsAgeWithCliFallback;
-  }
-};
-
-const runSopsAgeWithCliFallback: SopsDecrypt = (request) =>
-  runSopsAge(request).pipe(
-    Effect.catchIf(
-      () => true,
-      (nativeError) => {
-        if (!request.path) return Effect.fail(nativeError);
-
-        return runSopsCli(request).pipe(
-          Effect.catchIf(
-            () => true,
-            (cliError) =>
-              Effect.fail(
-                new SopsDecryptError({
-                  message: "Both sops-age and the sops CLI failed to decrypt",
-                  path: request.path ?? "<inline>",
-                  cause: { nativeError, cliError },
-                }),
-              ),
-          ),
-        );
-      },
-    ),
   );
 
 const parseDecryptedDocument = (

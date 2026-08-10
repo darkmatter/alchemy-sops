@@ -1,6 +1,6 @@
 {
   "name": "alchemy-sops",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Effect-native SOPS Schema decoding and optional Alchemy resources with redacted secret outputs.",
   "type": "module",
   "repository": {
@@ -21,6 +21,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./Config": {
+      "types": "./dist/Config.d.ts",
+      "import": "./dist/Config.js",
+      "default": "./dist/Config.js"
     },
     "./Schema": {
       "types": "./dist/Schema.d.ts",
@@ -57,7 +62,7 @@
   "devDependencies": {
     "@types/bun": "^1.3.2",
     "alchemy": "2.0.0-beta.70",
-    "effect": "4.0.0-beta.106",
+    "effect": "4.0.0-beta.102",
     "expect-type": "1.4.0",
     "typescript": "^7.0.0"
   },
