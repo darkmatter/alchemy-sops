@@ -52,7 +52,8 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "prepack": "bun run build",
-    "test": "bun test"
+    "smoke:examples": "bun test examples/smoke.test.ts",
+    "test": "cd test && bun test"
   },
   "dependencies": {
     "@distilled.cloud/cloudflare": "^0.30.0",

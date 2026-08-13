@@ -28,8 +28,11 @@ jobs:
       - name: Typecheck
         run: bun run check
 
-      - name: Test
-        run: bun test
+      - name: Test package
+        run: bun run test
 
       - name: Build
         run: bun run build
+
+      - name: Smoke test examples
+        run: bun run smoke:examples

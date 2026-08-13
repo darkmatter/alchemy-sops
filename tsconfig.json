@@ -7,11 +7,15 @@
     "moduleResolution": "NodeNext",
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
+    "paths": {
+      "alchemy-sops": ["./src/index.ts"],
+      "alchemy-sops/*": ["./src/*"]
+    },
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2023",
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["examples/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }
