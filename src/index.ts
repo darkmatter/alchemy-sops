@@ -15,6 +15,11 @@ export {
   type CloudflareSopsWorkerSecretBinding,
 } from "./Action.js";
 export {
+  GitHubSopsSecrets,
+  type GitHubSopsSecretsOptions,
+  type GitHubSopsSecretsOutput,
+} from "./GitHub.js";
+export {
   SopsFile,
   SopsFileProvider,
   SopsFileResource,

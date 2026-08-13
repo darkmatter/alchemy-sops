@@ -11,7 +11,11 @@ import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import { expectTypeOf } from "expect-type";
 
-import { SopsFile, type SopsRedactedDocument } from "../src/index.ts";
+import {
+  GitHubSopsSecrets,
+  SopsFile,
+  type SopsRedactedDocument,
+} from "../src/index.ts";
 
 // How TypeScript types an imported encrypted SOPS JSON document: the plaintext
 // key structure is preserved, encrypted leaves are `string`, plus the top-level
@@ -49,3 +53,12 @@ const secrets = SopsFile("Secrets", { json: encrypted });
 type Secrets = Effect.Success<typeof secrets>;
 type SecretsData = Secrets["data"] extends Output.Output<infer Data> ? Data : never;
 expectTypeOf<SecretsData>().toEqualTypeOf<ExpectedData>();
+
+// GitHub Actions secret names must be known while the stack is composed, so a
+// SOPS-to-GitHub bridge always requires an explicit name-to-path map.
+// @ts-expect-error `secrets` is required by GitHubSopsSecrets.
+GitHubSopsSecrets({
+  content: "ciphertext",
+  owner: "my-org",
+  repository: "my-repo",
+});

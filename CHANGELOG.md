@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `GitHubSopsSecrets`, which maps explicitly named SOPS selectors to
+  repository or environment GitHub Actions secrets through Alchemy's
+  `GitHub.Secret` resource.
+- Added runnable examples for `SopsFile`, JSON-import typing, Schema decoding,
+  ConfigProvider, Cloudflare Secrets Store, and GitHub Actions secrets. CI now
+  smoke-tests all examples against the built package and local provider mocks.
+
 ## 0.7.0 - 2026-08-09
 
 ### Added

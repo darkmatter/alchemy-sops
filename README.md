@@ -14,6 +14,7 @@ custom SOPS flags, and non-age backends.
 - [Install](#install)
 - [Changelog](./CHANGELOG.md)
 - [Usage](#usage)
+- [Examples](./examples/README.md)
 - [Typed from a JSON import](#typed-from-a-json-import)
 - [Alchemy-free Schema decoding](#alchemy-free-schema-decoding)
 - [Provider credentials from a ConfigProvider](#provider-credentials-from-a-configprovider)
@@ -417,6 +418,55 @@ const imported =
   });
 ```
 
+## GitHub Actions Secrets
+
+Use `GitHubSopsSecrets` to materialize selected SOPS values as repository or
+environment secrets through Alchemy's `GitHub.Secret` resource. It requires a
+static map of GitHub secret names to SOPS dot paths so that Alchemy can register
+one managed resource for each secret.
+
+The stack needs both `GitHub.providers()` and `SopsFileProvider()`. GitHub
+credentials are resolved by Alchemy; a token needs `repo` scope for private
+repositories or `public_repo` for public repositories.
+
+```ts
+import * as Alchemy from "alchemy";
+import * as GitHub from "alchemy/GitHub";
+import { GitHubSopsSecrets, SopsFileProvider } from "alchemy-sops";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+
+export default Alchemy.Stack(
+  "GitHubActions",
+  {
+    providers: Layer.mergeAll(
+      GitHub.providers(),
+      SopsFileProvider(),
+    ),
+  },
+  Effect.gen(function* () {
+    yield* GitHubSopsSecrets("DeploySecrets", {
+      path: "./secrets.enc.yaml",
+      format: "yaml",
+      owner: "my-org",
+      repository: "my-repo",
+      environment: "production", // omit for repository-wide secrets
+      ageKey: Redacted.make(process.env.SOPS_AGE_KEY!),
+      secrets: {
+        DEPLOY_TOKEN: "github.deployToken",
+        DATABASE_URL: "database.url",
+      },
+    });
+  }),
+);
+```
+
+Each secret remains redacted while it flows from `SopsFile` to `GitHub.Secret`.
+Changing the encrypted SOPS source updates the corresponding GitHub Actions
+secret. As with `SopsFile`, use an Alchemy state store you trust because state
+must retain redacted values to reconcile resources.
+
 ## Edge usage
 
 Alchemy programs can avoid local filesystem and process APIs by using inline
@@ -491,6 +541,13 @@ Provider options:
 `CloudflareSopsSecretsAction` also accepts `content`, the encrypted SOPS
 ciphertext to use as Action input. The `CloudflareSopsSecrets` wrapper fills
 that field by reading `path`.
+
+`GitHubSopsSecrets` accepts the `SopsFile` source and decrypt options plus:
+
+- `owner`, `repository`, `environment`, and `baseUrl`: forwarded to every
+  `GitHub.Secret`; omit `environment` for repository-wide secrets
+- `secrets`: required map from GitHub Actions secret names to decrypted SOPS
+  dot-path selectors
 
 ## Outputs
 
