@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-08-12
 
 ### Added
 
@@ -9,7 +9,7 @@
   `GitHub.Secret` resource.
 - Added runnable examples for `SopsFile`, JSON-import typing, Schema decoding,
   ConfigProvider, Cloudflare Secrets Store, and GitHub Actions secrets. CI now
-  smoke-tests all examples against the built package and local provider mocks.
+  smoke-tests all examples with native SOPS decryption and local provider mocks.
 
 ## 0.7.0 - 2026-08-09
 
