@@ -9,7 +9,7 @@
     "noEmit": true,
     "paths": {
       "alchemy-sops": ["./src/index.ts"],
-      "alchemy-sops/*": ["./src/*"]
+      "alchemy-sops/*": ["./src/*.ts"]
     },
     "resolveJsonModule": true,
     "skipLibCheck": true,
