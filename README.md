@@ -3,23 +3,27 @@
 Effect-native SOPS decoding and optional Alchemy resources with redacted
 secret outputs.
 
-`alchemy-sops` decrypts SOPS files with a native `sops-age` backend. Use
-`alchemy-sops/Schema` to decode imported SOPS JSON directly with Effect Schema,
-or use the package root for Alchemy resources whose scalar leaves are
-`Redacted<string>`. The `sops` CLI backend remains available for binary files,
-custom SOPS flags, and non-age backends.
+`alchemy-sops` decrypts SOPS files with a native `sops-age` backend. It keeps
+decrypted scalar values redacted while they move through Effect and Alchemy.
+The `sops` CLI backend remains available for binary files, custom SOPS flags,
+and non-age backends.
 
 ## Contents
 
 - [Install](#install)
 - [Changelog](./CHANGELOG.md)
-- [Usage](#usage)
+- [Choose a lifecycle](#choose-a-lifecycle)
+- [Inside an Alchemy stack](#inside-an-alchemy-stack)
+  - [Read a SOPS document](#read-a-sops-document)
+  - [Type a JSON import](#type-a-json-import)
+- [Without an Alchemy stack](#without-an-alchemy-stack)
+  - [Decode an imported JSON document](#decode-an-imported-json-document)
+  - [Edge usage](#edge-usage)
+- [Before an Alchemy stack](#before-an-alchemy-stack)
+- [At a deployment target](#at-a-deployment-target)
+  - [Cloudflare Secrets Store](#cloudflare-secrets-store)
+  - [GitHub Actions secrets](#github-actions-secrets)
 - [Examples](./examples/README.md)
-- [Typed from a JSON import](#typed-from-a-json-import)
-- [Alchemy-free Schema decoding](#alchemy-free-schema-decoding)
-- [Provider credentials from a ConfigProvider](#provider-credentials-from-a-configprovider)
-- [Cloudflare Secrets Store Action](#cloudflare-secrets-store-action)
-- [Edge usage](#edge-usage)
 - [Inputs](#inputs)
 - [Outputs](#outputs)
 - [Security note](#security-note)
@@ -42,7 +46,29 @@ The native backend does not require a `sops` binary. Install `sops` only when
 you need `backend: "cli"` or automatic fallback for SOPS features not supported
 by `sops-age`. See [CHANGELOG.md](./CHANGELOG.md) for release notes.
 
-## Usage
+## Choose a lifecycle
+
+There is one SOPS document pipeline—decrypt, parse, select, and redact. Choose
+the integration by **when the decrypted value is needed**, not by its source
+format or TypeScript typing technique:
+
+| When the value is needed | Start with | What varies within this route |
+| --- | --- | --- |
+| Inside an Alchemy stack | [`SopsFile`](#read-a-sops-document) | `path`, `content`, `url`, or JSON import; schema or inferred typing |
+| Before the stack initializes | [`alchemy-sops/Config`](#before-an-alchemy-stack) | Config lookup shape and credential mapping |
+| At a deployment target | [Cloudflare](#cloudflare-secrets-store) or [GitHub](#github-actions-secrets) import | Target provider and target-secret names |
+
+If you are not using Alchemy at all, use the focused
+[Effect Schema decoder](#decode-an-imported-json-document) or the
+[low-level edge entry point](#edge-usage). Those are runtime choices, not extra
+ways to configure an Alchemy stack.
+
+See the runnable [examples](./examples/README.md), organized using the same
+lifecycle model.
+
+## Inside an Alchemy stack
+
+### Read a SOPS document
 
 ```ts
 import * as Alchemy from "alchemy";
@@ -110,7 +136,7 @@ dot-path selection, and `types: true` or `types: { exportName: "AppSecrets" }`
 still returns generated TypeScript definitions in `secrets.types`; no files are
 written.
 
-## Typed from a JSON import
+### Type a JSON import
 
 TypeScript types JSON imports natively. Pass the imported encrypted SOPS
 document as `json`, and that inferred type flows through to `secrets.data` —
@@ -153,7 +179,9 @@ preserved, so the SOPS MAC still verifies. Every scalar leaf is mapped to
 the redacted `data` output. Reach for `schema` instead when you also want
 runtime validation or non-redacted leaf types.
 
-## Alchemy-free Schema decoding
+## Without an Alchemy stack
+
+### Decode an imported JSON document
 
 Use `alchemy-sops/Schema` to decrypt an imported SOPS JSON document and decode
 it with an Effect 4 `Schema.Struct` without configuring an Alchemy Stack. The
@@ -231,7 +259,32 @@ shape remains available to TypeScript. Use `SopsFile` or the low-level edge APIs
 for path, URL, extract, and ordered merge workflows; those sources cannot carry
 a static JSON import shape.
 
-## Provider credentials from a ConfigProvider
+### Edge usage
+
+Alchemy programs can avoid local filesystem and process APIs by using inline
+encrypted content or a URL source with the native backend:
+
+```ts
+import { SopsFile } from "alchemy-sops";
+
+const secrets =
+  yield *
+  SopsFile("WorkerSecrets", {
+    content: encryptedSopsJson,
+    format: "json",
+    backend: "sops-age",
+    ageKey: workerEnv.SOPS_AGE_KEY,
+  });
+```
+
+The Alchemy resource entrypoint still imports Alchemy. For code that is bundled
+directly into an edge runtime, use the low-level `alchemy-sops/edge` subpath:
+
+```ts
+import { runSopsAge } from "alchemy-sops/edge";
+```
+
+## Before an Alchemy stack
 
 `SopsFile` decrypts secrets _inside_ a stack, which is too late for the
 credentials the stack itself needs to authenticate. `alchemy-sops/Config` covers
@@ -299,7 +352,9 @@ programs that just want SOPS-backed configuration.
 > which means the `ConfigProvider` is never reached. Set `CI=1` in automation,
 > or run `alchemy login` for interactive use.
 
-## Cloudflare Secrets Store Action
+## At a deployment target
+
+### Cloudflare Secrets Store
 
 Use `CloudflareSopsSecrets` when Cloudflare Workers should receive secrets from
 Cloudflare Secrets Store instead of Alchemy state. It is the high-level wrapper
@@ -418,7 +473,7 @@ const imported =
   });
 ```
 
-## GitHub Actions Secrets
+### GitHub Actions secrets
 
 Use `GitHubSopsSecrets` to materialize selected SOPS values as repository or
 environment secrets through Alchemy's `GitHub.Secret` resource. It requires a
@@ -466,31 +521,6 @@ Each secret remains redacted while it flows from `SopsFile` to `GitHub.Secret`.
 Changing the encrypted SOPS source updates the corresponding GitHub Actions
 secret. As with `SopsFile`, use an Alchemy state store you trust because state
 must retain redacted values to reconcile resources.
-
-## Edge usage
-
-Alchemy programs can avoid local filesystem and process APIs by using inline
-encrypted content or a URL source with the native backend:
-
-```ts
-import { SopsFile } from "alchemy-sops";
-
-const secrets =
-  yield *
-  SopsFile("WorkerSecrets", {
-    content: encryptedSopsJson,
-    format: "json",
-    backend: "sops-age",
-    ageKey: workerEnv.SOPS_AGE_KEY,
-  });
-```
-
-The Alchemy resource entrypoint still imports Alchemy. For code that is bundled
-directly into an edge runtime, use the low-level `alchemy-sops/edge` subpath:
-
-```ts
-import { runSopsAge } from "alchemy-sops/edge";
-```
 
 ## Inputs
 
