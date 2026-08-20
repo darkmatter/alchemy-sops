@@ -15,10 +15,10 @@ import {
 } from "./document.js";
 import { SopsInputError } from "./errors.js";
 import { type MaybeRedactedString } from "./input.js";
+import { buildSopsCommandRequest } from "./source.js";
 import {
   type SopsBackend,
   type SopsCliFormat,
-  type SopsCommandRequest,
   type SopsDecrypt,
   runSopsAge,
   runSopsCli,
@@ -395,21 +395,16 @@ export const cloudflareSecretName = (path: string): string => {
 const decryptForAction = (
   input: CloudflareSopsSecretsActionInput,
 ): Effect.Effect<string | readonly string[], unknown> => {
-  const outputType =
-    input.outputType ?? defaultOutputType(input.format ?? "auto");
   const decryptOne = (path: string, content: string) => {
-    const request: SopsCommandRequest = {
-      path,
-      content,
-      binary: input.sopsBinary ?? "sops",
-      args: input.sopsArgs ?? [],
-      env: commandEnv(input),
-      timeoutMs: input.timeoutMs ?? 30_000,
-      ...(input.cwd ? { cwd: input.cwd } : {}),
-      ...(input.inputType ? { inputType: input.inputType } : {}),
-      ...(outputType ? { outputType } : {}),
-      ...(input.extract ? { extract: input.extract } : {}),
-    };
+    const request = buildSopsCommandRequest({
+      source: { path, content },
+      options: {
+        ...input,
+        sopsArgs: input.sopsArgs ?? [],
+        env: input.env ?? {},
+        timeoutMs: input.timeoutMs ?? 30_000,
+      },
+    });
 
     return defaultDecrypt(input.backend ?? "auto", input.format ?? "auto")(
       request,
@@ -518,36 +513,6 @@ const isReadonlyStringArray = (value: unknown): value is readonly string[] =>
 const resolveFallbackFormat = (
   format: SopsDocumentFormat,
 ): ResolvedSopsDocumentFormat => (format === "auto" ? "json" : format);
-
-const commandEnv = (
-  input: Pick<
-    CloudflareSopsSecretsActionInput,
-    "ageKey" | "ageKeyFile" | "env"
-  >,
-): Record<string, MaybeRedactedString> => {
-  const env: Record<string, MaybeRedactedString> = { ...(input.env ?? {}) };
-  if (input.ageKey) env.SOPS_AGE_KEY = input.ageKey;
-  if (input.ageKeyFile) env.SOPS_AGE_KEY_FILE = input.ageKeyFile;
-  return env;
-};
-
-const defaultOutputType = (
-  format: SopsDocumentFormat,
-): SopsCliFormat | undefined => {
-  switch (format) {
-    case "yaml":
-      return "yaml";
-    case "dotenv":
-      return "dotenv";
-    case "binary":
-      return "binary";
-    case "text":
-      return undefined;
-    case "auto":
-    case "json":
-      return "json";
-  }
-};
 
 const defaultDecrypt = (
   backend: SopsBackend,

@@ -38,6 +38,7 @@ import {
   resolveSecretStringRecord,
   revealString,
 } from "./input.js";
+import { buildSopsCommandRequest } from "./source.js";
 import {
   type SopsBackend,
   type SopsCliFormat,
@@ -261,21 +262,15 @@ export const SopsFileProvider = (options: SopsFileProviderOptions = {}) => {
 
       yield* session.note(`Decrypting ${source.label}`);
 
-      const outputType = news.outputType ?? defaultOutputType(news.format);
       const decryptOne = (item: LoadedEncryptedSource) => {
-        const request: SopsCommandRequest = {
-          binary: revealString(news.sopsBinary),
-          args: news.sopsArgs.map(revealString),
-          env: commandEnv(news),
-          timeoutMs: news.timeoutMs,
-          content: item.content,
-          ...(item.path ? { path: item.path } : {}),
-          ...(item.url ? { url: item.url } : {}),
-          ...(news.cwd ? { cwd: revealString(news.cwd) } : {}),
-          ...(news.inputType ? { inputType: news.inputType } : {}),
-          ...(outputType ? { outputType } : {}),
-          ...(news.extract ? { extract: revealString(news.extract) } : {}),
-        };
+        const request = buildSopsCommandRequest({
+          source: {
+            content: item.content,
+            ...(item.path ? { path: item.path } : {}),
+            ...(item.url ? { url: item.url } : {}),
+          },
+          options: news,
+        });
         return decryptWithRetry(
           decryptFor(news.backend, news.format),
           request,
@@ -458,24 +453,6 @@ const normalizeOptionalCliFormat = (
     message: `Invalid ${field}: ${raw}`,
     field,
   });
-};
-
-const defaultOutputType = (
-  format: SopsDocumentFormat,
-): SopsCliFormat | undefined => {
-  switch (format) {
-    case "yaml":
-      return "yaml";
-    case "dotenv":
-      return "dotenv";
-    case "binary":
-      return "binary";
-    case "text":
-      return undefined;
-    case "auto":
-    case "json":
-      return "json";
-  }
 };
 
 const decryptWithRetry = (
@@ -862,19 +839,6 @@ const sha256Hex = async (parts: readonly Uint8Array[]): Promise<string> => {
 
 const bytesToHex = (bytes: Uint8Array): string =>
   [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-
-const commandEnv = (
-  props: SopsFileProps,
-): Record<string, string | Redacted.Redacted<string>> => {
-  const env: Record<string, string | Redacted.Redacted<string>> = {
-    ...props.env,
-  };
-
-  if (props.ageKey) env.SOPS_AGE_KEY = props.ageKey;
-  if (props.ageKeyFile) env.SOPS_AGE_KEY_FILE = props.ageKeyFile;
-
-  return env;
-};
 
 const sameProps = (
   olds: SopsFileProps | undefined,

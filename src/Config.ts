@@ -17,6 +17,7 @@ import {
   type SopsCommandRequest,
   type SopsDecrypt,
 } from "./sops.js";
+import { buildSopsCommandRequest } from "./source.js";
 
 /**
  * Describes the SOPS document backing a `ConfigProvider`.
@@ -172,46 +173,19 @@ export const provideCredentials = <
 const buildRequest = (
   options: SopsConfigOptions,
   format: SopsDocumentFormat,
-): SopsCommandRequest => {
-  const env: Record<string, string | Redacted.Redacted<string>> = {
-    ...options.env,
-  };
-  if (options.ageKey !== undefined) env["SOPS_AGE_KEY"] = options.ageKey;
-  if (options.ageKeyFile !== undefined) {
-    env["SOPS_AGE_KEY_FILE"] = options.ageKeyFile;
-  }
-
-  const cliFormat = asCliFormat(format);
-  const inputType = options.inputType ?? cliFormat;
-  const outputType = options.outputType ?? cliFormat;
-
-  return {
-    ...(options.path !== undefined ? { path: options.path } : {}),
-    ...(options.content !== undefined ? { content: options.content } : {}),
-    ...(options.json !== undefined ? { content: JSON.stringify(options.json) } : {}),
-    ...(options.url !== undefined ? { url: options.url } : {}),
-    ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-    binary: options.sopsBinary ?? "sops",
-    ...(inputType !== undefined ? { inputType } : {}),
-    ...(outputType !== undefined ? { outputType } : {}),
-    ...(options.extract !== undefined ? { extract: options.extract } : {}),
-    ...(options.sopsArgs !== undefined ? { args: options.sopsArgs } : {}),
-    ...(Object.keys(env).length > 0 ? { env } : {}),
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-  };
-};
-
-const asCliFormat = (format: SopsDocumentFormat): SopsCliFormat | undefined => {
-  switch (format) {
-    case "json":
-    case "yaml":
-    case "dotenv":
-    case "binary":
-      return format;
-    default:
-      return undefined;
-  }
-};
+): SopsCommandRequest =>
+  buildSopsCommandRequest({
+    source: {
+      ...(options.path !== undefined ? { path: options.path } : {}),
+      ...(options.content !== undefined ? { content: options.content } : {}),
+      ...(options.json !== undefined
+        ? { content: JSON.stringify(options.json) }
+        : {}),
+      ...(options.url !== undefined ? { url: options.url } : {}),
+    },
+    options: { ...options, format },
+    inferInputType: true,
+  });
 
 const sourceLabel = (options: SopsConfigOptions): string => {
   if (options.path) return options.path;
