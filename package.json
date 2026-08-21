@@ -1,6 +1,6 @@
 {
   "name": "alchemy-sops",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Effect-native SOPS Schema decoding and optional Alchemy resources with redacted secret outputs.",
   "type": "module",
   "repository": {

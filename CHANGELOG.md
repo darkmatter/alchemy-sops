@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.1 - 2026-08-20
+
+### Changed
+
+- Normalized SOPS command construction across `SopsFile`, `ConfigProvider`, and
+  Cloudflare secret actions. Command defaults, source formats, SOPS age
+  credentials, and redacted command options now resolve consistently.
+
 ## 0.8.0 - 2026-08-12
 
 ### Added
