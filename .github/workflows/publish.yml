@@ -77,12 +77,14 @@ jobs:
         env:
           PACKAGE_SPEC: ${{ steps.package.outputs.spec }}
         run: |
-          for attempt in 1 2 3 4 5 6; do
+          # npm's read path can lag a successful publish by 10+ minutes for
+          # new packages and versions; the publish above already succeeded.
+          for attempt in $(seq 1 40); do
             if npm view "$PACKAGE_SPEC" version --registry=https://registry.npmjs.org; then
               exit 0
             fi
-            echo "Not readable yet; retrying in 15s (attempt $attempt/6)"
-            sleep 15
+            echo "Not readable yet; retrying in 30s (attempt $attempt/40)"
+            sleep 30
           done
           echo "::error::$PACKAGE_SPEC never became readable on the registry"
           exit 1
