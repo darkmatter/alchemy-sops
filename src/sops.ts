@@ -30,3 +30,8 @@ export const runSopsCli: SopsDecrypt = (request) =>
   );
 
 export { runSopsAge } from "./sops-age.js";
+export {
+  runSopsKms,
+  type SopsKmsEntry,
+  type SopsKmsOptions,
+} from "./sops-kms.js";

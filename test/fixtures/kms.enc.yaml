@@ -1,0 +1,20 @@
+api:
+    token: ENC[AES256_GCM,data:b3+XcEX0o0Pl,iv:oakMDF4h0S9l4jrBa2pMzbqo6++NwsUD5cDgCvxUDxY=,tag:MHm+QsmPJSPqswdyWKmIDA==,type:str]
+    enabled: ENC[AES256_GCM,data:pDpAWg==,iv:71VAenZf198aP4bR/JKvIwMfR2z1Wyy2hK9q2A5T0KE=,tag:LVehujFtfJqZ1ei9/3aVMw==,type:bool]
+    retries: ENC[AES256_GCM,data:IA==,iv:5tynn0NciAQPUVTiWlHn2qpKs/7BWscFRn1Bobzy5PY=,tag:Yt0464uyfaFyzGFar5g3fg==,type:int]
+hosts:
+    - ENC[AES256_GCM,data:JZ3ei8A=,iv:14AFySUpmAiDDMrJnE7cztvm7ZQhtn7bvp2OQfhTbw8=,tag:M00DgBWRsGwyk6Mu0NpWcQ==,type:str]
+    - ENC[AES256_GCM,data:j1Icew==,iv:imEN2IH2+7lwVFsKjF1Mmu67HMKLdxX5kNKEr+3bECY=,tag:auMVON84513cZ64JrQzaqw==,type:str]
+nested:
+    deep:
+        value: ENC[AES256_GCM,data:tbY+xQ==,iv:vxxeFP6OIqwh77R9OpjTSkm8eYt8c3Jk+NTLR9EWm0c=,tag:4o2brvcqX23EM3fjRnPlGw==,type:str]
+sops:
+    kms:
+        - arn: arn:aws:kms:us-west-2:950224716579:key/71e3cd26-ace6-41a0-8ab1-ed51a941443a
+          aws_profile: ""
+          created_at: "2026-09-22T16:41:48Z"
+          enc: AQICAHjl8iZS3lO40Qqg83Zg/XqZEjU5EJ9pgoXAPFEVsSbTsgFJUkMjYkblOmfHw6FTiUy/AAAAfjB8BgkqhkiG9w0BBwagbzBtAgEAMGgGCSqGSIb3DQEHATAeBglghkgBZQMEAS4wEQQMlOsIvRodhq+FZx9/AgEQgDunEIRNiCPXNwKWvJlFAu3wSWKWQkvJxtiZBm7BfoVU4qqt3nSkZuE6x+NVV0O3yqbo6smh+eAucOLqtQ==
+    lastmodified: "2026-09-22T16:41:48Z"
+    mac: ENC[AES256_GCM,data:kPyYV6qYEKEErc9Dsew3/tH5LfPAIYRnk4IeDg1cyVQtj9RtWItbCGqSC6NWcp9/aUohrz+MkzcemMeBVrILpv49BhFMMzP/liRNvPjifhh5qPDIq9S3u6j8OOJuyWhE79S6oUZMf5bV7lW/cX7Un20lqy31AD2Y5zkiN7jCNNk=,iv:Z1V9cK/zDj0roYGPRKmABhCjwEeXw/cu0bnSslP/AN8=,tag:LFUKkU4yxl8wmdMVNJotRg==,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.13.3

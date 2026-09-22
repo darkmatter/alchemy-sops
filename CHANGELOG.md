@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0 - 2026-09-22
+
+### Added
+
+- Added `runSopsKms`, a `SopsDecrypt` for documents whose master key is AWS
+  KMS: the caller unwraps a `sops.kms[]` entry (`kms:Decrypt`) and `sops-age`
+  decrypts the leaves with its new `dataKey` option, so Workers and Lambdas
+  with only AWS credentials can read SOPS files. Exported from the root and
+  `alchemy-sops/edge`.
+
+### Changed
+
+- The native backend now uses `@drkmttr/sops-age`, darkmatter's published
+  fork of `sops-age` with the `dataKey` option and nullable `sops.age`
+  (offered upstream as humphd/sops-age#22).
+
 ## 0.8.1 - 2026-08-20
 
 ### Changed
