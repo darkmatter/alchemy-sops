@@ -12,7 +12,7 @@
 
 ### Changed
 
-- The native backend now uses `@darkmatter/sops-age`, darkmatter's published
+- The native backend now uses `@drkmttr/sops-age`, darkmatter's published
   fork of `sops-age` with the `dataKey` option and nullable `sops.age`
   (offered upstream as humphd/sops-age#22).
 

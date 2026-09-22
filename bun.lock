@@ -5,8 +5,8 @@
     "": {
       "name": "alchemy-sops",
       "dependencies": {
-        "@darkmatter/sops-age": "github:darkmatter/sops-age#29874e79745e278a2cbea35e41124a251e352dac",
         "@distilled.cloud/cloudflare": "^0.30.0",
+        "@drkmttr/sops-age": "^4.1.0",
         "yaml": "^2.8.1",
       },
       "devDependencies": {
@@ -104,8 +104,6 @@
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20260804.1", "", {}, "sha512-B1dwxpN6e5RZXZkE5zpZj+ooNeNZ1mwavLIyHDYe10ojhlGTwDfe8sAl7R1mMXc1cyIsbr+jKVdvmMEyVcdTdg=="],
 
-    "@darkmatter/sops-age": ["@darkmatter/sops-age@github:darkmatter/sops-age#29874e7", { "dependencies": { "@noble/ciphers": "^1.3.0", "@noble/hashes": "^1.8.0", "@scure/base": "^1.2.6", "age-encryption": "^0.2.3", "dotenv": "^16.5.0", "lodash": "^4.17.21", "sshpk": "^1.18.0", "yaml": "^2.8.0", "zod": "^3.25.46" } }, "darkmatter-sops-age-29874e7", "sha512-K9gVSRZa3thsk/quwJithsWU54NPgy0I6SmB8IjnyCYnKtgTVutCsLrXGOgxjzlU6YuKgh5cfw3vbmnR79vfAA=="],
-
     "@distilled.cloud/aws": ["@distilled.cloud/aws@1.0.0-rc.2", "", { "dependencies": { "@aws-crypto/crc32": "^5.2.0", "@aws-crypto/util": "^5.2.0", "@aws-sdk/credential-providers": "^3.994.0", "@aws-sdk/types": "^3.973.1", "@distilled.cloud/core": "1.0.0-rc.2", "@smithy/shared-ini-file-loader": "^4.4.3", "@smithy/types": "^4.12.0", "@smithy/util-base64": "^4.3.0", "aws4fetch": "^1.0.20", "fast-xml-parser": "^5.3.2" }, "peerDependencies": { "effect": ">=4.0.0-beta.102 || >=4.0.0" } }, "sha512-hTWmdpfaKt6yLQ1YrJ17tp0DXINH7Wm5WQ05ap1FZW13Kwv+HzejXc4QPOYS6KT00Tlrfm6EEkTd3fDrY8dSGQ=="],
 
     "@distilled.cloud/axiom": ["@distilled.cloud/axiom@1.0.0-rc.2", "", { "dependencies": { "@distilled.cloud/core": "1.0.0-rc.2", "@effect/platform-bun": ">=4.0.0-beta.102 || >=4.0.0", "effect": ">=4.0.0-beta.102 || >=4.0.0" } }, "sha512-okRnWBdEQ6vYanYtiKbNzNJCgccEa7ZgeytHaNRTvIpHD4PlwG5WYwBsLkhTYjjudOvD5yjJ4H2N8dQQsJlGrg=="],
@@ -123,6 +121,8 @@
     "@distilled.cloud/neon": ["@distilled.cloud/neon@1.0.0-rc.2", "", { "dependencies": { "@distilled.cloud/core": "1.0.0-rc.2", "@effect/platform-bun": ">=4.0.0-beta.102 || >=4.0.0", "effect": ">=4.0.0-beta.102 || >=4.0.0" } }, "sha512-j1SRh/ionzWDeS8nO3+zF8h2zHNOddmTfqeev5LBs1pKeQWBJ3ZVDK3GeBACZzaeW3rCcll8eJEZ6fRnrp3xbw=="],
 
     "@distilled.cloud/planetscale": ["@distilled.cloud/planetscale@1.0.0-rc.2", "", { "dependencies": { "@distilled.cloud/core": "1.0.0-rc.2", "@effect/platform-bun": ">=4.0.0-beta.102 || >=4.0.0", "effect": ">=4.0.0-beta.102 || >=4.0.0" } }, "sha512-ucuQ0VM3bmovjzHoC/C7uo9634EQOJcI1gzx0jjdE2QIDsvy56UhjT3alilq9kADGz1V0/LUHOV3Xf1VqJf6Nw=="],
+
+    "@drkmttr/sops-age": ["@drkmttr/sops-age@4.1.0", "", { "dependencies": { "@noble/ciphers": "^1.3.0", "@noble/hashes": "^1.8.0", "@scure/base": "^1.2.6", "age-encryption": "^0.2.3", "dotenv": "^16.5.0", "lodash": "^4.17.21", "sshpk": "^1.18.0", "yaml": "^2.8.0", "zod": "^3.25.46" } }, "sha512-6fG0e3j076zW0hHY7Up5lwaNN5D9ySJ8nSop+FH//C5qOeO8GzEGtuN6ySGLCEdgK+cUz5c9uxrENCIfVtJxzg=="],
 
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-beta.105", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.105" }, "peerDependencies": { "effect": "^4.0.0-beta.105" } }, "sha512-5eCuMLxfkLbVK5If5zFybyKduQvhYofy0oPsbTH8UiIrYqyx5QqK9G9PZ1SfBsbqHfykwLEpMCdzQczFGERw2w=="],
 

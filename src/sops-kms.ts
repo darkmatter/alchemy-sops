@@ -15,7 +15,7 @@
  */
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { decryptSops } from "@darkmatter/sops-age";
+import { decryptSops } from "@drkmttr/sops-age";
 import { parse as parseYaml } from "yaml";
 
 import {

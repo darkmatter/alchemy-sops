@@ -3,7 +3,7 @@
 Effect-native SOPS decoding and optional Alchemy resources with redacted
 secret outputs.
 
-`alchemy-sops` decrypts SOPS files with a native `sops-age` backend (via `@darkmatter/sops-age`, our fork with KMS data-key support). It keeps
+`alchemy-sops` decrypts SOPS files with a native `sops-age` backend (via `@drkmttr/sops-age`, our fork with KMS data-key support). It keeps
 decrypted scalar values redacted while they move through Effect and Alchemy.
 The `sops` CLI backend remains available for binary files, custom SOPS flags,
 and non-age backends.

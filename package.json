@@ -56,8 +56,8 @@
     "test": "cd test && bun test"
   },
   "dependencies": {
-    "@darkmatter/sops-age": "github:darkmatter/sops-age#29874e79745e278a2cbea35e41124a251e352dac",
     "@distilled.cloud/cloudflare": "^0.30.0",
+    "@drkmttr/sops-age": "^4.1.0",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
