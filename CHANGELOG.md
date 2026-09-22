@@ -12,8 +12,9 @@
 
 ### Changed
 
-- `sops-age` is consumed from darkmatter's fork (`dataKey` option, nullable
-  `sops.age`) until that lands upstream.
+- The native backend now uses `@darkmatter/sops-age`, darkmatter's published
+  fork of `sops-age` with the `dataKey` option and nullable `sops.age`
+  (offered upstream as humphd/sops-age#22).
 
 ## 0.8.1 - 2026-08-20
 

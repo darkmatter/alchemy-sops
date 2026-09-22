@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { decryptSops, type DecryptSopsOptions } from "sops-age";
+import { decryptSops, type DecryptSopsOptions } from "@darkmatter/sops-age";
 import { stringify as stringifyYaml } from "yaml";
 
 import {
