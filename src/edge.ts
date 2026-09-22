@@ -9,6 +9,12 @@ export {
   runSopsAge,
 } from "./sops-age.js";
 export {
+  decryptSopsTreeWithDataKey,
+  runSopsKms,
+  type SopsKmsEntry,
+  type SopsKmsOptions,
+} from "./sops-kms.js";
+export {
   buildSopsArgs,
   defaultSopsDecryptMemoizeKey,
   memoizeDecrypt,

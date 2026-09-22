@@ -284,6 +284,37 @@ directly into an edge runtime, use the low-level `alchemy-sops/edge` subpath:
 import { runSopsAge } from "alchemy-sops/edge";
 ```
 
+### KMS-encrypted documents (no age key, no `sops` binary)
+
+For a runtime that holds AWS credentials but nothing else — a Cloudflare Worker
+assuming an IAM role through OIDC, a Lambda, an ECS task — `runSopsKms` is a
+`SopsDecrypt` whose master key is AWS KMS. You supply the one AWS call it
+needs: unwrap a `sops.kms[]` entry with `kms:Decrypt`.
+
+```ts
+import * as Effect from "effect/Effect";
+import { runSopsKms } from "alchemy-sops/edge";
+
+const decrypt = runSopsKms({
+  // entry = { arn, enc, ... } from the document's sops.kms[] list.
+  unwrapDataKey: (entry) => kmsDecrypt({ keyId: entry.arn, ciphertext: fromBase64(entry.enc) }),
+  // optional: only try the key this role can use
+  keyArn: "arn:aws:kms:us-west-2:123456789012:key/…",
+});
+
+const json = yield* decrypt({ content: encryptedJson, binary: "sops", inputType: "json", outputType: "json" });
+```
+
+`@darkmatter/sdk/aws` ships `sopsDataKeyUnwrapper(credentials)` as a ready-made
+`unwrapDataKey` on top of its `WorkloadIdentity` credentials. The result plugs
+into anything that accepts `decrypt`, so `SopsFile` and `alchemy-sops/Config`
+work unchanged with a KMS-only document.
+
+Leaves are decrypted in-process with WebCrypto (AES-256-GCM, path-bound
+additional data), so a value cannot be altered or moved. Like the `sops-age`
+backend, the document-level `sops.mac` is not verified. JSON and YAML only;
+the document must be passed as `content`.
+
 ## Before an Alchemy stack
 
 `SopsFile` decrypts secrets _inside_ a stack, which is too late for the
@@ -554,7 +585,7 @@ Supported options:
 
 Provider options:
 
-- `decrypt`: custom decrypt backend
+- `decrypt`: custom decrypt backend (e.g. `runSopsKms({ unwrapDataKey })` for KMS-encrypted documents)
 - `memoize`: `true` to share in-flight and completed decrypts by request in the
   current process, or `{ key }` to provide a custom memoization key
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added `runSopsKms`, a `SopsDecrypt` for documents whose master key is AWS
+  KMS: the caller unwraps a `sops.kms[]` entry (`kms:Decrypt`) and leaves are
+  decrypted in-process with WebCrypto, so Workers and Lambdas with only AWS
+  credentials can read SOPS files. Also exports `decryptSopsTreeWithDataKey`,
+  the master-key-agnostic half, from the root and `alchemy-sops/edge`.
+
 ## 0.8.1 - 2026-08-20
 
 ### Changed

@@ -122,7 +122,8 @@ const toSopsAgeFileType = (
   }
 };
 
-const normalizeSopsExtract = (extract: string): string => {
+/** `["a"]["b"]` (sops --extract syntax) or dotted → `a.b`. */
+export const normalizeSopsExtract = (extract: string): string => {
   const trimmed = extract.trim();
   const bracketPath = [...trimmed.matchAll(/\[['"]([^'"]+)['"]\]/g)].map(
     (match) => match[1],
@@ -131,7 +132,8 @@ const normalizeSopsExtract = (extract: string): string => {
   return bracketPath.length > 0 ? bracketPath.join(".") : trimmed;
 };
 
-const encodeDecryptedValue = (
+/** Serialize a decrypted value in the requested SOPS output format. */
+export const encodeDecryptedValue = (
   value: unknown,
   outputType: SopsCliFormat | undefined,
 ): string => {
