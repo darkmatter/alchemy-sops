@@ -59,8 +59,32 @@ const fromBase64 = (value: string): Uint8Array =>
 const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
-// https://github.com/getsops/sops/blob/main/aes/cipher.go
-const ENC_VALUE = /^ENC\[AES256_GCM,data:(.*),iv:(.+),tag:(.+),type:(.+)\]$/;
+// SOPS leaf format (https://github.com/getsops/sops/blob/main/aes/cipher.go):
+//   ENC[AES256_GCM,data:<b64>,iv:<b64>,tag:<b64>,type:<str|int|float|bool|bytes>]
+// Parsed by splitting, not by regex: base64 never contains "," so the four
+// fields are unambiguous, and this stays linear on attacker-sized input.
+const ENC_PREFIX = "ENC[AES256_GCM,";
+
+interface EncryptedLeaf {
+  readonly data: string;
+  readonly iv: string;
+  readonly tag: string;
+  readonly type: string;
+}
+
+const parseEncryptedLeaf = (value: string): EncryptedLeaf | undefined => {
+  if (!value.startsWith(ENC_PREFIX) || !value.endsWith("]")) return undefined;
+  const fields: Partial<Record<keyof EncryptedLeaf, string>> = {};
+  for (const part of value.slice(ENC_PREFIX.length, -1).split(",")) {
+    const colon = part.indexOf(":");
+    if (colon === -1) return undefined;
+    const key = part.slice(0, colon);
+    if (key !== "data" && key !== "iv" && key !== "tag" && key !== "type") return undefined;
+    fields[key] = part.slice(colon + 1);
+  }
+  const { data, iv, tag, type } = fields;
+  return data !== undefined && iv && tag && type ? { data, iv, tag, type } : undefined;
+};
 
 type SopsType = "str" | "int" | "float" | "bool" | "bytes";
 
@@ -92,9 +116,9 @@ const decryptLeaf = async (
   value: string,
   path: ReadonlyArray<string | number>,
 ): Promise<unknown> => {
-  const match = ENC_VALUE.exec(value);
-  if (!match) return value; // plaintext leaf (encrypted_regex / unencrypted_suffix)
-  const [, data, iv, tag, type] = match as unknown as [string, string, string, string, string];
+  const leaf = parseEncryptedLeaf(value);
+  if (!leaf) return value; // plaintext leaf (encrypted_regex / unencrypted_suffix)
+  const { data, iv, tag, type } = leaf;
   const dataBytes = fromBase64(data);
   const tagBytes = fromBase64(tag);
   const sealed = new Uint8Array(dataBytes.length + tagBytes.length);
