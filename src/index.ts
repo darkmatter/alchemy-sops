@@ -44,7 +44,6 @@ export {
   runSopsAge,
   runSopsCli,
   runSopsKms,
-  decryptSopsTreeWithDataKey,
   type SopsKmsEntry,
   type SopsKmsOptions,
   type SopsBackend,

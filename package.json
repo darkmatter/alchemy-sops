@@ -57,7 +57,7 @@
   },
   "dependencies": {
     "@distilled.cloud/cloudflare": "^0.30.0",
-    "sops-age": "^4.0.2",
+    "sops-age": "github:czxtm/sops-age#ab3560cb793aae77a7887f84c49f5afa516603a5",
     "yaml": "^2.8.1"
   },
   "devDependencies": {

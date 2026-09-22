@@ -7,16 +7,15 @@
  * stores that key wrapped once per master key under `sops.kms[]` (for KMS)
  * or `sops.age[]` (for age). This backend asks the caller to unwrap one of
  * the `sops.kms[]` entries — via `kms:Decrypt` with whatever credentials the
- * runtime has — and then does the same leaf decryption as the age backend,
- * in-process with WebCrypto.
+ * runtime has — and hands the data key to `sops-age`, which performs the
+ * same leaf decryption it does after an age unwrap.
  *
- * Not verified: the document-level `sops.mac`. Each leaf is still
- * authenticated by its GCM tag and its path (SOPS's additional data), so a
- * value cannot be altered or moved; the MAC would additionally detect a
- * removed leaf. Same trade-off as the `sops-age` backend.
+ * Not verified: the document-level `sops.mac` (same as the age backend).
+ * Each leaf is still authenticated by its GCM tag and its path.
  */
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import { decryptSops } from "sops-age";
 import { parse as parseYaml } from "yaml";
 
 import {
@@ -50,163 +49,32 @@ export interface SopsKmsOptions {
   readonly keyArn?: string;
 }
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
+type KmsFormat = "json" | "yaml";
 
-const fromBase64 = (value: string): Uint8Array =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-
-const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer =>
-  bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-
-// SOPS leaf format (https://github.com/getsops/sops/blob/main/aes/cipher.go):
-//   ENC[AES256_GCM,data:<b64>,iv:<b64>,tag:<b64>,type:<str|int|float|bool|bytes>]
-// Parsed by splitting, not by regex: base64 never contains "," so the four
-// fields are unambiguous, and this stays linear on attacker-sized input.
-const ENC_PREFIX = "ENC[AES256_GCM,";
-
-interface EncryptedLeaf {
-  readonly data: string;
-  readonly iv: string;
-  readonly tag: string;
-  readonly type: string;
-}
-
-const parseEncryptedLeaf = (value: string): EncryptedLeaf | undefined => {
-  if (!value.startsWith(ENC_PREFIX) || !value.endsWith("]")) return undefined;
-  const fields: Partial<Record<keyof EncryptedLeaf, string>> = {};
-  for (const part of value.slice(ENC_PREFIX.length, -1).split(",")) {
-    const colon = part.indexOf(":");
-    if (colon === -1) return undefined;
-    const key = part.slice(0, colon);
-    if (key !== "data" && key !== "iv" && key !== "tag" && key !== "type") return undefined;
-    fields[key] = part.slice(colon + 1);
-  }
-  const { data, iv, tag, type } = fields;
-  return data !== undefined && iv && tag && type ? { data, iv, tag, type } : undefined;
+const documentFormat = (request: SopsCommandRequest): KmsFormat | undefined => {
+  const format = request.inputType ?? request.outputType ?? "json";
+  return format === "json" || format === "yaml" ? format : undefined;
 };
 
-type SopsType = "str" | "int" | "float" | "bool" | "bytes";
-
-const parseTyped = (plaintext: Uint8Array, type: string): unknown => {
-  const text = decoder.decode(plaintext);
-  switch (type as SopsType) {
-    case "str":
-      return text;
-    case "int":
-      return Number.parseInt(text, 10);
-    case "float":
-      return Number.parseFloat(text);
-    case "bool":
-      // sops writes Go-style "True"/"False"
-      return text.toLowerCase() === "true";
-    case "bytes":
-      return text;
-    default:
-      throw new Error(`unknown SOPS value type "${type}"`);
-  }
-};
-
-/** SOPS additional data: the key path joined by `:` with a trailing `:`; array indices are skipped. */
-const additionalData = (path: ReadonlyArray<string | number>): Uint8Array =>
-  encoder.encode(`${path.filter((segment) => typeof segment === "string").join(":")}:`);
-
-const decryptLeaf = async (
-  key: CryptoKey,
-  value: string,
-  path: ReadonlyArray<string | number>,
-): Promise<unknown> => {
-  const leaf = parseEncryptedLeaf(value);
-  if (!leaf) return value; // plaintext leaf (encrypted_regex / unencrypted_suffix)
-  const { data, iv, tag, type } = leaf;
-  const dataBytes = fromBase64(data);
-  const tagBytes = fromBase64(tag);
-  const sealed = new Uint8Array(dataBytes.length + tagBytes.length);
-  sealed.set(dataBytes);
-  sealed.set(tagBytes, dataBytes.length);
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: toArrayBuffer(fromBase64(iv)), additionalData: toArrayBuffer(additionalData(path)), tagLength: 128 },
-    key,
-    toArrayBuffer(sealed),
-  );
-  return parseTyped(new Uint8Array(plaintext), type);
-};
-
-const decryptTree = async (
-  key: CryptoKey,
-  node: unknown,
-  path: ReadonlyArray<string | number>,
-): Promise<unknown> => {
-  if (typeof node === "string") return decryptLeaf(key, node, path);
-  if (Array.isArray(node)) {
-    return Promise.all(node.map((item, index) => decryptTree(key, item, [...path, index])));
-  }
-  if (node !== null && typeof node === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      out[k] = await decryptTree(key, v, [...path, k]);
-    }
-    return out;
-  }
-  return node;
-};
-
-const selectPath = (tree: unknown, extract: string): unknown =>
-  normalizeSopsExtract(extract)
-    .split(".")
-    .reduce<unknown>(
-      (node, segment) =>
-        node !== null && typeof node === "object"
-          ? (node as Record<string, unknown>)[segment]
-          : undefined,
-      tree,
-    );
-
-/**
- * Decrypt a parsed SOPS document (with its `sops` metadata) using an
- * already-unwrapped data key. Master-key agnostic: this is the half every
- * backend shares once it has the data key.
- */
-export const decryptSopsTreeWithDataKey = (
-  document: Record<string, unknown>,
-  dataKey: Uint8Array,
-): Effect.Effect<Record<string, unknown>, SopsDecryptError> =>
-  Effect.tryPromise({
-    try: async () => {
-      if (dataKey.length !== 32) {
-        throw new Error(`SOPS data key must be 32 bytes, got ${dataKey.length}`);
-      }
-      const key = await crypto.subtle.importKey("raw", toArrayBuffer(dataKey), { name: "AES-GCM" }, false, [
-        "decrypt",
-      ]);
-      const { sops: _metadata, ...tree } = document;
-      return (await decryptTree(key, tree, [])) as Record<string, unknown>;
-    },
-    catch: (cause) =>
-      new SopsDecryptError({
-        message: "Failed to decrypt SOPS values with the unwrapped data key",
-        path: "<inline>",
-        cause,
-      }),
-  });
-
-const parseDocument = (request: SopsCommandRequest): Effect.Effect<Record<string, unknown>, SopsDecryptError> =>
+/** Just enough parsing to read `sops.kms[]`; sops-age parses the document itself. */
+const kmsEntries = (
+  request: SopsCommandRequest,
+  format: KmsFormat,
+  keyArn: string | undefined,
+): Effect.Effect<ReadonlyArray<SopsKmsEntry>, SopsDecryptError> =>
   Effect.try({
     try: () => {
       if (request.content === undefined) {
         throw new Error("The kms backend requires inline `content`; read the file first");
       }
       const text = revealSecretString(request.content);
-      const format = request.inputType ?? request.outputType ?? "json";
-      const parsed: unknown =
-        format === "json" ? JSON.parse(text) : format === "yaml" ? parseYaml(text) : undefined;
-      if (parsed === undefined) {
-        throw new Error(`The kms backend supports json and yaml documents, not ${format}`);
-      }
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("SOPS document root must be an object");
-      }
-      return parsed as Record<string, unknown>;
+      const document: unknown = format === "json" ? JSON.parse(text) : parseYaml(text);
+      const metadata = (document as { sops?: { kms?: unknown } } | null)?.sops;
+      const entries = Array.isArray(metadata?.kms) ? (metadata.kms as SopsKmsEntry[]) : [];
+      return entries.filter(
+        (entry) =>
+          typeof entry?.arn === "string" && typeof entry?.enc === "string" && (!keyArn || entry.arn === keyArn),
+      );
     },
     catch: (cause) =>
       new SopsDecryptError({
@@ -215,14 +83,6 @@ const parseDocument = (request: SopsCommandRequest): Effect.Effect<Record<string
         cause,
       }),
   });
-
-const kmsEntries = (document: Record<string, unknown>, keyArn: string | undefined): ReadonlyArray<SopsKmsEntry> => {
-  const metadata = document.sops as { kms?: unknown } | undefined;
-  const entries = Array.isArray(metadata?.kms) ? (metadata.kms as SopsKmsEntry[]) : [];
-  return entries.filter(
-    (entry) => typeof entry?.arn === "string" && typeof entry?.enc === "string" && (!keyArn || entry.arn === keyArn),
-  );
-};
 
 /**
  * A `SopsDecrypt` whose master key is AWS KMS. Plug it in wherever a
@@ -234,8 +94,14 @@ export const runSopsKms =
   (request) =>
     Effect.gen(function* () {
       const label = requestLabel(request);
-      const document = yield* parseDocument(request);
-      const entries = kmsEntries(document, options.keyArn);
+      const format = documentFormat(request);
+      if (!format) {
+        return yield* new SopsDecryptError({
+          message: `The kms backend supports json and yaml documents, not ${request.inputType ?? request.outputType}`,
+          path: label,
+        });
+      }
+      const entries = yield* kmsEntries(request, format, options.keyArn);
       if (entries.length === 0) {
         return yield* new SopsDecryptError({
           message: options.keyArn
@@ -263,16 +129,22 @@ export const runSopsKms =
         });
       }
 
-      const tree = yield* decryptSopsTreeWithDataKey(document, dataKey);
-      const selected = request.extract ? selectPath(tree, request.extract) : tree;
-      if (request.extract && selected === undefined) {
-        return yield* new SopsDecryptError({
-          message: `No value at ${request.extract}`,
-          path: label,
-        });
-      }
+      const decrypted = yield* Effect.tryPromise({
+        try: () =>
+          decryptSops(revealSecretString(request.content!), {
+            dataKey,
+            fileType: format,
+            ...(request.extract ? { keyPath: normalizeSopsExtract(request.extract) } : {}),
+          }),
+        catch: (cause) =>
+          new SopsDecryptError({
+            message: "Failed to decrypt SOPS values with the unwrapped data key",
+            path: label,
+            cause,
+          }),
+      });
       return yield* Effect.try({
-        try: () => encodeDecryptedValue(selected, request.outputType ?? request.inputType),
+        try: () => encodeDecryptedValue(decrypted, request.outputType ?? request.inputType),
         catch: (cause) =>
           cause instanceof SopsDecryptError
             ? cause

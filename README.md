@@ -310,10 +310,10 @@ const json = yield* decrypt({ content: encryptedJson, binary: "sops", inputType:
 into anything that accepts `decrypt`, so `SopsFile` and `alchemy-sops/Config`
 work unchanged with a KMS-only document.
 
-Leaves are decrypted in-process with WebCrypto (AES-256-GCM, path-bound
-additional data), so a value cannot be altered or moved. Like the `sops-age`
-backend, the document-level `sops.mac` is not verified. JSON and YAML only;
-the document must be passed as `content`.
+Leaf decryption is `sops-age`'s own (its `dataKey` option), so the two native
+backends share one implementation; like the `sops-age` backend, the
+document-level `sops.mac` is not verified. JSON and YAML only; the document
+must be passed as `content`.
 
 ## Before an Alchemy stack
 
